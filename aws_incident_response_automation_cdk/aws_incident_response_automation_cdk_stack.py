@@ -8,6 +8,8 @@ from aws_cdk import (
     aws_glue as glue,
     aws_s3_notifications as s3n,
     aws_lambda as _lambda,
+    aws_ec2 as ec2,
+    aws_route53resolver as route53resolver,
     Duration,
     RemovalPolicy,
 )
@@ -18,12 +20,21 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        vpc_ids = self.node.try_get_context("vpc_ids") or []
+
         self._create_storage_infrastructure()
+        self._create_log_group()
         self._enable_guardduty()
         self._create_cloudtrail()
         self._add_bucket_policies()
         self._create_glue_table()
+        self._create_cloudwatch_export_lambda()
         self._create_cloudtrail_etl()
+        self._create_subscription_filter()
+        if vpc_ids:
+            self._create_flow_log_iam_role()
+            self._create_vpc_flow_logs(vpc_ids)
+            self._create_dns_query_logging(vpc_ids)
 
 
     def _create_storage_infrastructure(self):
@@ -183,22 +194,23 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         #         kms_key_arn=None
         #     )
         # )
-  
-    def _create_cloudtrail(self):
-        self.cloudtrail_cloudwatch_log_group = logs.LogGroup(
-            self, "CloudTrailCloudWatchLogGroup",
-            log_group_name=f"incident-response-cloudtrail-log-group-{self.account}-{self.region}",
-            retention=logs.RetentionDays.THREE_MONTHS,
+
+    def _create_log_group(self):
+        self.ir_log_group = logs.LogGroup(
+            self, "IRLogGroup",
+            log_group_name="/aws/incident-response/centralized-logs",
+            retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=RemovalPolicy.DESTROY
         )
-
+        
+    def _create_cloudtrail(self):
+      
         self.cloudtrail = cloudtrail.Trail( 
             self, "CloudTrail",
             trail_name=f"incident-response-cloudtrail-{self.account}-{self.region}",
             is_multi_region_trail=True,
             bucket=self.log_list_bucket,            
             enable_file_validation=True,
-            cloud_watch_log_group=self.cloudtrail_cloudwatch_log_group,
             management_events=cloudtrail.ReadWriteType.WRITE_ONLY,
         )
 
@@ -317,4 +329,97 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             s3.NotificationKeyFilter(prefix=f"AWSLogs/{self.account}/CloudTrail/")
         )
 
+    def _create_flow_log_iam_role(self):
+        self.flow_logs_role = iam.Role(
+            self, "FlowLogsIAMRole",
+            assumed_by=iam.ServicePrincipal("vpc-flow-logs.amazonaws.com"),
+            inline_policies={
+                "FlowLogsPolicy": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=[
+                                "logs:CreateLogGroup",
+                                "logs:CreateLogStream",
+                                "logs:PutLogEvents",
+                                "logs:DescribeLogGroups",
+                                "logs:DescribeLogStreams"
+                            ],
+                            resources=["*"]
+                        )
+                    ]
+                )
+            }
+        )
+
+    def _create_vpc_flow_logs(self, vpc_ids):
+        for i, vpc_id in enumerate(vpc_ids):
+            ec2.CfnFlowLog(
+                self, f"VPCFlowLog{i}",
+                resource_id=vpc_id,
+                resource_type="VPC",
+                traffic_type="ALL",
+                log_destination_type="cloud-watch-logs",
+                log_group_name=self.ir_log_group.log_group_name,
+                deliver_logs_permission_arn=self.flow_logs_role.role_arn
+            )  
+  
+    def _create_dns_query_logging(self, vpc_ids):
+
+        resolver_query_logging_config = route53resolver.CfnResolverQueryLoggingConfig(
+            self, "ResolverQueryLoggingConfig",
+            destination_arn=self.ir_log_group.log_group_arn,
+        )
+
+        for i, vpc_id in enumerate(vpc_ids):
+            route53resolver.CfnResolverQueryLoggingConfigAssociation(
+                self, f"ResolverQueryLoggingConfigAssociation{i}",
+                resolver_query_log_config_id=resolver_query_logging_config.ref,
+                resource_id=vpc_id
+            ) 
+
+    def _create_cloudwatch_export_lambda(self):
+        self.cloudwatch_export_function = _lambda.Function(
+            self, "CloudWatchExportLambda",
+            function_name=f"cloudwatch-export-lambda",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="cloudwatch_export.lambda_handler",
+            code=_lambda.Code.from_asset("lambda/cloudwatch_autoexport"),
+            timeout=Duration.minutes(5),
+            environment={
+                "DESTINATION_BUCKET": self.log_list_bucket.bucket_name
+            }
+        )
+
+        self.cloudwatch_export_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:PutObject",
+                         "logs:CreateExportTask",
+                         "logs:DescribeExportTasks",
+                         ],
+                resources=[
+                    self.log_list_bucket.arn_for_objects("*"),
+                    f"arn:aws:logs:{self.region}:{self.account}:log-group:*"
+                ]
+            )
+        ) 
         
+       
+    def _create_subscription_filter(self):
+      permission_resource = _lambda.CfnPermission(
+        self, "CloudWatchLogsLambdaPermission",
+        action="lambda:InvokeFunction",
+        function_name=self.cloudwatch_export_function.function_name,
+        principal=f"logs.{self.region}.amazonaws.com",
+        source_arn=f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/incident-response/centralized-logs:*"
+    )
+
+    # Create subscription filter
+      subscription_filter = logs.CfnSubscriptionFilter(
+        self, "IRLogGroupSubscriptionFilter",
+        log_group_name=self.ir_log_group.log_group_name,
+        filter_pattern="",
+        destination_arn=self.cloudwatch_export_function.function_arn
+    )
+    
+    # Add explicit dependency
+      subscription_filter.add_dependency(permission_resource)
