@@ -31,6 +31,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         self._create_cloudwatch_export_lambda()
         self._create_cloudtrail_etl()
         self._create_subscription_filter()
+        self._create_cloudwatch_etl()
         if vpc_ids:
             self._create_flow_log_iam_role()
             self._create_vpc_flow_logs(vpc_ids)
@@ -61,6 +62,15 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         self.athena_query_results_bucket = s3.Bucket(
             self, "AthenaQueryResultsBucket",
             bucket_name=f"athena-query-results-{self.account}-{self.region}",
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            versioned=True,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+
+        self.processed_cloudwatch_logs_bucket = s3.Bucket(
+            self, "ProcessedCloudWatchLogsBucket",
+            bucket_name=f"processed-cloudwatch-logs-{self.account}-{self.region}",
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
@@ -222,7 +232,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 name="security_logs"
             )
         )
-
+        # CloudTrail Glue Table
         self.glue_table = glue.CfnTable(
             self, "ProcessedCloudTrailTable",
             catalog_id=self.account,
@@ -287,6 +297,50 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             )
         )
 
+        # CloudWatch Glue Table
+        self.glue_cloudwatch_vpc_logs_table = glue.CfnTable(
+            self, "CloudWatchVPCLogsTable",
+            catalog_id=self.account,
+            database_name="security_logs",
+            table_input=glue.CfnTable.TableInputProperty(
+                name="vpc_logs",
+                table_type="EXTERNAL_TABLE",
+                parameters={
+                    "classification": "json",
+                    "compressionType": "gzip"
+                },
+                storage_descriptor=glue.CfnTable.StorageDescriptorProperty(
+                    columns=[
+                        glue.CfnTable.ColumnProperty(name="version", type="string"),
+                        glue.CfnTable.ColumnProperty(name="account_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="region", type="string"),
+                        glue.CfnTable.ColumnProperty(name="vpc_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="query_timestamp", type="string"),
+                        glue.CfnTable.ColumnProperty(name="query_name", type="string"),
+                        glue.CfnTable.ColumnProperty(name="query_type", type="string"),
+                        glue.CfnTable.ColumnProperty(name="query_class", type="string"),
+                        glue.CfnTable.ColumnProperty(name="rcode", type="string"),
+                        glue.CfnTable.ColumnProperty(name="answers", type="string"),
+                        glue.CfnTable.ColumnProperty(name="srcaddr", type="string"),
+                        glue.CfnTable.ColumnProperty(name="srcport", type="int"),
+                        glue.CfnTable.ColumnProperty(name="transport", type="string"),
+                        glue.CfnTable.ColumnProperty(name="srcids_instance", type="string"),
+                        glue.CfnTable.ColumnProperty(name="timestamp", type="string")
+                    ],
+                    location=f"s3://{self.processed_cloudwatch_logs_bucket.bucket_name}/vpc-logs/",
+                    input_format="org.apache.hadoop.mapred.TextInputFormat",
+                    output_format="org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+                    serde_info=glue.CfnTable.SerdeInfoProperty(
+                        serialization_library="org.openx.data.jsonserde.JsonSerDe",
+                        parameters={"serialization.format": "1"}
+                    )
+                ),
+                partition_keys=[
+                    glue.CfnTable.ColumnProperty(name="date", type="string")
+                ]
+            )
+        )
+        
     def _create_cloudtrail_etl(self):
         self.cloudtrail_etl_function = _lambda.Function(
             self, "CloudTrailETLLambda",
@@ -382,7 +436,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             self, "CloudWatchExportLambda",
             function_name=f"cloudwatch-export-lambda",
             runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="cloudwatch_export.lambda_handler",
+            handler="cloudwatch_autoexport.lambda_handler",
             code=_lambda.Code.from_asset("lambda/cloudwatch_autoexport"),
             timeout=Duration.minutes(5),
             environment={
@@ -402,8 +456,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 ]
             )
         ) 
-        
-       
+            
     def _create_subscription_filter(self):
       permission_resource = _lambda.CfnPermission(
         self, "CloudWatchLogsLambdaPermission",
@@ -413,13 +466,53 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         source_arn=f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/incident-response/centralized-logs:*"
     )
 
-    # Create subscription filter
       subscription_filter = logs.CfnSubscriptionFilter(
         self, "IRLogGroupSubscriptionFilter",
         log_group_name=self.ir_log_group.log_group_name,
         filter_pattern="",
         destination_arn=self.cloudwatch_export_function.function_arn
     )
-    
-    # Add explicit dependency
       subscription_filter.add_dependency(permission_resource)
+
+    def _create_cloudwatch_etl(self):
+        self.cloudwatch_etl_function = _lambda.Function(
+            self, "CloudWatchETLLambda",
+            function_name=f"cloudwatch-etl-lambda",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="cloudwatch_etl.lambda_handler",
+            code=_lambda.Code.from_asset("lambda/cloudwatch_etl"),
+            timeout=Duration.minutes(5),
+            environment={
+                "SOURCE_BUCKET": self.log_list_bucket.bucket_name,
+                "DEST_BUCKET": self.processed_cloudwatch_logs_bucket.bucket_name,
+                "DATABASE_NAME": "security_logs",
+                "TABLE_NAME": "vpc_logs"
+            }
+        )
+
+        self.cloudwatch_etl_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject"],
+                resources=[
+                    self.log_list_bucket.arn_for_objects("*"),
+                    self.processed_cloudwatch_logs_bucket.arn_for_objects("*")
+                ]
+            )
+        )
+
+        self.cloudwatch_etl_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["glue:CreatePartition", "glue:GetPartition"],
+                resources=[
+                    f"arn:aws:glue:{self.region}:{self.account}:catalog",
+                    f"arn:aws:glue:{self.region}:{self.account}:database/security_logs",
+                    f"arn:aws:glue:{self.region}:{self.account}:table/security_logs/vpc_logs"
+                ]
+            )
+        )
+
+        self.log_list_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.cloudwatch_etl_function),
+            s3.NotificationKeyFilter(prefix="exportedlogs/vpc-dns-logs/")
+        )

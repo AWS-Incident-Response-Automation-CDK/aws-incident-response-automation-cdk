@@ -11,12 +11,12 @@ glue = boto3.client("glue")
 # --------------------------------------------------
 # CONFIG
 # --------------------------------------------------
-SOURCE_BUCKET = "vel-log-list-demo"
-SOURCE_PREFIX = "exportedlogs/vpc-dns-logs/GuardDutylog/"
+SOURCE_BUCKET = os.environ.get("SOURCE_BUCKET", "cloudwatch-autoexport-bucket")
+SOURCE_PREFIX = "exportedlogs/vpc-dns-logs/"
 
-DEST_BUCKET = "cloudwatch-formatted"
-DATABASE_NAME = "security_logs"
-TABLE_NAME = "vpc_logs"
+DEST_BUCKET = os.environ.get("DEST_BUCKET", "cloudwatch-etl-bucket")
+DATABASE_NAME = os.environ.get("DATABASE_NAME", "cloudwatch_etl_db")
+TABLE_NAME = os.environ.get("TABLE_NAME", "vpc_dns_logs")
 
 VPC_RE = re.compile(r"/(vpc-[0-9A-Za-z\-]+)")
 ISO_TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T")
@@ -39,13 +39,10 @@ GLUE_COLUMNS = [
     {"Name": "timestamp", "Type": "string"}
 ]
 
-# ----------------------------- UTILS -----------------------------
-
 def read_gz(bucket, key):
     obj = s3.get_object(Bucket=bucket, Key=key)
     with gzip.GzipFile(fileobj=obj["Body"]) as f:
         return f.read().decode("utf-8", errors="replace")
-
 
 def flatten_once(d):
     out = {}
@@ -63,53 +60,6 @@ def safe_int(x):
         return int(x)
     except:
         return None
-
-# -------------------------- GLUE MANAGEMENT --------------------------
-
-def ensure_glue_db():
-    try:
-        glue.get_database(Name=DATABASE_NAME)
-    except glue.exceptions.EntityNotFoundException:
-        glue.create_database(DatabaseInput={"Name": DATABASE_NAME})
-        print("Created Glue DB:", DATABASE_NAME)
-
-
-def ensure_glue_table():
-    try:
-        glue.get_table(DatabaseName=DATABASE_NAME, Name=TABLE_NAME)
-        return
-    except glue.exceptions.EntityNotFoundException:
-        print("Creating Glue table:", TABLE_NAME)
-
-    glue.create_table(
-        DatabaseName=DATABASE_NAME,
-        TableInput={
-            "Name": TABLE_NAME,
-            "TableType": "EXTERNAL_TABLE",
-            "Parameters": {
-                "classification": "json",
-                "use.null.for.invalid.data": "true",
-                "ignore.malformed.json": "true",
-                # Glue/Athena tự động nhận diện nén GZIP qua đuôi file .gz
-                "compressionType": "gzip" 
-            },
-            "StorageDescriptor": {
-                "Columns": GLUE_COLUMNS,
-                "Location": f"s3://{DEST_BUCKET}/",
-                "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
-                "OutputFormat": "org.apache.hadoop.hive.ql.io.IgnoreKeyTextOutputFormat",
-                "SerdeInfo": {
-                    "SerializationLibrary": "org.openx.data.jsonserde.JsonSerDe",
-                    "Parameters": {
-                        "ignore.malformed.json": "true",
-                        "use.null.for.invalid.data": "true"
-                    }
-                },
-            },
-            "PartitionKeys": [{"Name": "partition_0", "Type": "string"}]
-        }
-    )
-    print("Glue table created")
 
 
 def ensure_partition(partition_value):
@@ -130,7 +80,7 @@ def ensure_partition(partition_value):
             "Values": [partition_value],
             "StorageDescriptor": {
                 "Columns": GLUE_COLUMNS,
-                "Location": f"s3://{DEST_BUCKET}/date={partition_value}/",
+                "Location": f"s3://{DEST_BUCKET}/vpc-logs/date={partition_value}/",
                 "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
                 "OutputFormat": "org.apache.hadoop.hive.ql.io.IgnoreKeyTextOutputFormat",
                 "SerdeInfo": {
@@ -175,8 +125,6 @@ def parse_dns_line(line):
     return flat
 
 
-# ----------------------------- MAIN LAMBDA -----------------------------
-
 def lambda_handler(event, context):
     print("Event received:", json.dumps(event))
 
@@ -203,8 +151,6 @@ def lambda_handler(event, context):
         
         original_filename = os.path.basename(key) 
         
-        # THAY ĐỔI 1: Tên file output có thêm đuôi .gz
-        # Ví dụ: vpc-xyz.gz -> vpc-xyz.jsonl.gz
         new_filename = original_filename.replace(".gz", ".jsonl.gz")
 
         vpc_id_match = VPC_RE.search(key)
@@ -243,9 +189,8 @@ def lambda_handler(event, context):
             final_data.append(out)
 
         partition_value = final_data[0]["timestamp"][:10]
-        dest_key = f"date={partition_value}/{new_filename}"
+        dest_key = f"vpc-logs/date={partition_value}/{new_filename}"
         
-        # THAY ĐỔI 2: Nén GZIP nội dung trước khi upload
         json_body = "\n".join(json.dumps(r, ensure_ascii=False) for r in final_data)
         compressed_body = gzip.compress(json_body.encode("utf-8"))
         
@@ -254,12 +199,10 @@ def lambda_handler(event, context):
             Key=dest_key,
             Body=compressed_body,
             ContentType="application/x-ndjson",
-            ContentEncoding="gzip" # Báo cho S3/Browser biết đây là file nén
+            ContentEncoding="gzip" 
         )
         print(f"--> Uploaded (Gzipped): {dest_key}")
 
-        ensure_glue_db()
-        ensure_glue_table()
         ensure_partition(partition_value)
         
         processed_count += 1
