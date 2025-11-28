@@ -10,6 +10,7 @@ from aws_cdk import (
     aws_lambda as _lambda,
     aws_ec2 as ec2,
     aws_route53resolver as route53resolver,
+    aws_kms as kms,
     Duration,
     RemovalPolicy,
 )
@@ -24,6 +25,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
 
         self._create_storage_infrastructure()
         self._create_log_group()
+        self._create_kms_key()
         self._enable_guardduty()
         self._create_cloudtrail()
         self._add_bucket_policies()
@@ -32,6 +34,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         self._create_cloudtrail_etl()
         self._create_subscription_filter()
         self._create_cloudwatch_etl()
+        self._create_guardduty_etl()
         if vpc_ids:
             self._create_flow_log_iam_role()
             self._create_vpc_flow_logs(vpc_ids)
@@ -77,6 +80,38 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             removal_policy=RemovalPolicy.DESTROY
         )
 
+        self.processed_guardduty_findings_bucket = s3.Bucket(
+            self, "ProcessedGuardDutyFindingsBucket",
+            bucket_name=f"processed-guardduty-findings-{self.account}-{self.region}",
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            versioned=True,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+
+    def _create_kms_key(self):
+        self.kms_key = kms.Key(
+            self, "GuardDutyKMSKey",
+            description="KMS Key for GuardDuty findings encryption",
+            enable_key_rotation=True,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+
+        self.kms_key.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowGuardDutyEncryptFindings",
+                principals=[iam.ServicePrincipal("guardduty.amazonaws.com")],
+                actions=["kms:GenerateDataKey"],
+                resources=["*"],
+                conditions={
+                    "StringEquals": {
+                        "aws:SourceAccount": self.account,
+                        "aws:SourceArn": f"arn:aws:guardduty:{self.region}:{self.account}:detector/*"
+                    }
+                }
+            )
+        )
+  
     def _add_bucket_policies(self):
 
         GD_DETECTOR_ID = self.guardduty_detector.ref
@@ -195,15 +230,15 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             finding_publishing_frequency="ONE_HOUR"
         )
 
-        # self.guardduty_publishing_destination = guardduty.CfnPublishingDestination(
-        #     self, "GuardDutyS3Publishing",
-        #     detector_id=self.guardduty_detector.ref,
-        #     destination_type="S3",
-        #     destination_properties=guardduty.CfnPublishingDestination.CFNDestinationPropertiesProperty(
-        #         destination_arn=self.log_list_bucket.bucket_arn,
-        #         kms_key_arn=None
-        #     )
-        # )
+        self.guardduty_publishing_destination = guardduty.CfnPublishingDestination(
+            self, "GuardDutyS3Publishing",
+            detector_id=self.guardduty_detector.ref,
+            destination_type="S3",
+            destination_properties=guardduty.CfnPublishingDestination.CFNDestinationPropertiesProperty(
+                destination_arn=self.log_list_bucket.bucket_arn,
+                kms_key_arn=self.kms_key.key_arn
+            )
+        )
 
     def _create_log_group(self):
         self.ir_log_group = logs.LogGroup(
@@ -340,6 +375,70 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 ]
             )
         )
+
+        # GuardDuty Glue Table
+        self.glue_guardduty_findings_table = glue.CfnTable(
+            self, "GuardDutyFindingsTable",
+            catalog_id=self.account,
+            database_name="security_logs",
+            table_input=glue.CfnTable.TableInputProperty(
+                name="processed_guardduty",
+                table_type="EXTERNAL_TABLE",
+                parameters={
+                    "classification": "json",
+                    "compressionType": "gzip"
+                },
+                storage_descriptor=glue.CfnTable.StorageDescriptorProperty(
+                columns=[
+                    glue.CfnTable.ColumnProperty(name="finding_id", type="string"),
+                    glue.CfnTable.ColumnProperty(name="finding_type", type="string"),
+                    glue.CfnTable.ColumnProperty(name="title", type="string"),
+                    glue.CfnTable.ColumnProperty(name="severity", type="double"),
+                    glue.CfnTable.ColumnProperty(name="account_id", type="string"),
+                    glue.CfnTable.ColumnProperty(name="region", type="string"),
+                    glue.CfnTable.ColumnProperty(name="created_at", type="string"),
+                    glue.CfnTable.ColumnProperty(name="event_last_seen", type="string"),
+                    glue.CfnTable.ColumnProperty(name="remote_ip", type="string"),
+                    glue.CfnTable.ColumnProperty(name="remote_port", type="int"),
+                    glue.CfnTable.ColumnProperty(name="connection_direction", type="string"),
+                    glue.CfnTable.ColumnProperty(name="protocol", type="string"),
+                    glue.CfnTable.ColumnProperty(name="dns_domain", type="string"),
+                    glue.CfnTable.ColumnProperty(name="dns_protocol", type="string"),
+                    glue.CfnTable.ColumnProperty(name="scanned_ip", type="string"),
+                    glue.CfnTable.ColumnProperty(name="scanned_port", type="int"),
+                    glue.CfnTable.ColumnProperty(name="aws_api_service", type="string"),
+                    glue.CfnTable.ColumnProperty(name="aws_api_name", type="string"),
+                    glue.CfnTable.ColumnProperty(name="aws_api_caller_type", type="string"),
+                    glue.CfnTable.ColumnProperty(name="aws_api_error", type="string"),
+                    glue.CfnTable.ColumnProperty(name="aws_api_remote_ip", type="string"),
+                    glue.CfnTable.ColumnProperty(name="target_resource_arn", type="string"),
+                    glue.CfnTable.ColumnProperty(name="instance_id", type="string"),
+                    glue.CfnTable.ColumnProperty(name="resource_region", type="string"),
+                    glue.CfnTable.ColumnProperty(name="access_key_id", type="string"),
+                    glue.CfnTable.ColumnProperty(name="principal_id", type="string"),
+                    glue.CfnTable.ColumnProperty(name="user_name", type="string"),
+                    glue.CfnTable.ColumnProperty(name="s3_bucket_name", type="string"),
+                    glue.CfnTable.ColumnProperty(name="date", type="string"),
+                    glue.CfnTable.ColumnProperty(name="service_raw", type="string"),
+                    glue.CfnTable.ColumnProperty(name="resource_raw", type="string"),
+                    glue.CfnTable.ColumnProperty(name="metadata_raw", type="string")
+                ],
+                location=f"s3://{self.processed_guardduty_findings_bucket.bucket_name}/processed-guardduty/",
+                input_format="org.apache.hadoop.mapred.TextInputFormat",
+                output_format="org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+                serde_info=glue.CfnTable.SerdeInfoProperty(
+                    serialization_library="org.openx.data.jsonserde.JsonSerDe",
+                    parameters={"serialization.format": "1"}
+                )
+            ),
+            partition_keys=[
+                glue.CfnTable.ColumnProperty(name="type", type="string"),
+                glue.CfnTable.ColumnProperty(name="year", type="string"),
+                glue.CfnTable.ColumnProperty(name="month", type="string"),
+                glue.CfnTable.ColumnProperty(name="day", type="string")
+            ]
+        )
+    )
         
     def _create_cloudtrail_etl(self):
         self.cloudtrail_etl_function = _lambda.Function(
@@ -515,4 +614,54 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(self.cloudwatch_etl_function),
             s3.NotificationKeyFilter(prefix="exportedlogs/vpc-dns-logs/")
+        )
+    
+    def _create_guardduty_etl(self):
+        self.guardduty_etl_function = _lambda.Function(
+            self, "GuardDutyETLLambda",
+            function_name="incident-response-guardduty-etl",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="guardduty_etl.lambda_handler",
+            code=_lambda.Code.from_asset("lambda/guardduty_etl"),
+            timeout=Duration.minutes(5),
+            environment={
+                "DESTINATION_BUCKET": self.processed_guardduty_findings_bucket.bucket_name,
+                "DATABASE_NAME": "security_logs",
+                "TABLE_NAME_GUARDDUTY": "processed_guardduty",
+                "S3_LOCATION_GUARDDUTY": f"s3://{self.processed_guardduty_findings_bucket.bucket_name}/processed-guardduty/"
+            }
+        )
+    
+        self.guardduty_etl_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject"],
+                resources=[
+                    self.log_list_bucket.arn_for_objects("*"),
+                    self.processed_guardduty_findings_bucket.arn_for_objects("*")
+                ]
+            )
+        )
+    
+        self.guardduty_etl_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["kms:Decrypt"],
+                resources=[self.kms_key.key_arn]
+            )
+        )
+    
+        self.guardduty_etl_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["glue:CreatePartition", "glue:GetPartition"],
+                resources=[
+                    f"arn:aws:glue:{self.region}:{self.account}:catalog",
+                    f"arn:aws:glue:{self.region}:{self.account}:database/security_logs",
+                    f"arn:aws:glue:{self.region}:{self.account}:table/security_logs/processed_guardduty"
+                ]
+            )
+        )
+    
+        self.log_list_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.guardduty_etl_function),
+            s3.NotificationKeyFilter(prefix=f"AWSLogs/{self.account}/GuardDuty/")
         )

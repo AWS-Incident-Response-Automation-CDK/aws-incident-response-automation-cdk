@@ -92,8 +92,6 @@ def ensure_partition(partition_value):
     print("Created partition:", partition_value)
 
 
-# -------------------------- PARSE DNS LOGS --------------------------
-
 def parse_dns_line(line):
     raw = line.strip()
     if not raw:
