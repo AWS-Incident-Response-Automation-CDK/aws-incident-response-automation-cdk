@@ -46,8 +46,8 @@ def lambda_handler(event, context):
             key_prefix = 'vpc-dns-logs'
             filename_prefix = 'vpc-' # Add vpc- to the filename
         else:
-            key_prefix = 'other-logs'
-            filename_prefix = ''      # Keep filename blank for other logs
+            key_prefix = 'vpc-flow-logs'
+            filename_prefix = 'eni-'      # Keep filename blank for other logs
             
         output_content = '\n'.join(log_lines)
         

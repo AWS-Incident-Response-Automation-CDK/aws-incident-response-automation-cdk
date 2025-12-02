@@ -38,10 +38,12 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         self._create_cloudtrail_etl()
         self._create_subscription_filter()
         self._create_cloudwatch_etl()
+        self._create_cloudwatch_eni_etl()
         self._create_guardduty_etl()
         self._create_sns_topic()
         self._create_alert_dispatch()
         self._create_event_bridge_rules()
+        self._create_security_group()
         if vpc_ids:
             self._create_flow_log_iam_role()
             self._create_vpc_flow_logs(vpc_ids)
@@ -447,59 +449,103 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                     "compressionType": "gzip"
                 },
                 storage_descriptor=glue.CfnTable.StorageDescriptorProperty(
-                columns=[
-                    glue.CfnTable.ColumnProperty(name="finding_id", type="string"),
-                    glue.CfnTable.ColumnProperty(name="finding_type", type="string"),
-                    glue.CfnTable.ColumnProperty(name="title", type="string"),
-                    glue.CfnTable.ColumnProperty(name="severity", type="double"),
-                    glue.CfnTable.ColumnProperty(name="account_id", type="string"),
-                    glue.CfnTable.ColumnProperty(name="region", type="string"),
-                    glue.CfnTable.ColumnProperty(name="created_at", type="string"),
-                    glue.CfnTable.ColumnProperty(name="event_last_seen", type="string"),
-                    glue.CfnTable.ColumnProperty(name="remote_ip", type="string"),
-                    glue.CfnTable.ColumnProperty(name="remote_port", type="int"),
-                    glue.CfnTable.ColumnProperty(name="connection_direction", type="string"),
-                    glue.CfnTable.ColumnProperty(name="protocol", type="string"),
-                    glue.CfnTable.ColumnProperty(name="dns_domain", type="string"),
-                    glue.CfnTable.ColumnProperty(name="dns_protocol", type="string"),
-                    glue.CfnTable.ColumnProperty(name="scanned_ip", type="string"),
-                    glue.CfnTable.ColumnProperty(name="scanned_port", type="int"),
-                    glue.CfnTable.ColumnProperty(name="aws_api_service", type="string"),
-                    glue.CfnTable.ColumnProperty(name="aws_api_name", type="string"),
-                    glue.CfnTable.ColumnProperty(name="aws_api_caller_type", type="string"),
-                    glue.CfnTable.ColumnProperty(name="aws_api_error", type="string"),
-                    glue.CfnTable.ColumnProperty(name="aws_api_remote_ip", type="string"),
-                    glue.CfnTable.ColumnProperty(name="target_resource_arn", type="string"),
-                    glue.CfnTable.ColumnProperty(name="instance_id", type="string"),
-                    glue.CfnTable.ColumnProperty(name="instance_type", type="string"),
-                    glue.CfnTable.ColumnProperty(name="image_id", type="string"),
-                    glue.CfnTable.ColumnProperty(name="instance_tags", type="string"),
-                    glue.CfnTable.ColumnProperty(name="resource_region", type="string"),
-                    glue.CfnTable.ColumnProperty(name="access_key_id", type="string"),
-                    glue.CfnTable.ColumnProperty(name="principal_id", type="string"),
-                    glue.CfnTable.ColumnProperty(name="user_name", type="string"),
-                    glue.CfnTable.ColumnProperty(name="s3_bucket_name", type="string"),
-                    glue.CfnTable.ColumnProperty(name="date", type="string"),
-                    glue.CfnTable.ColumnProperty(name="service_raw", type="string"),
-                    glue.CfnTable.ColumnProperty(name="resource_raw", type="string"),
-                    glue.CfnTable.ColumnProperty(name="metadata_raw", type="string")
-                ],
-                location=f"s3://{self.processed_guardduty_findings_bucket.bucket_name}/processed-guardduty/",
-                input_format="org.apache.hadoop.mapred.TextInputFormat",
-                output_format="org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
-                serde_info=glue.CfnTable.SerdeInfoProperty(
-                    serialization_library="org.openx.data.jsonserde.JsonSerDe",
-                    parameters={"serialization.format": "1"}
-                )
-            ),
-            partition_keys=[
-                glue.CfnTable.ColumnProperty(name="type", type="string"),
-                glue.CfnTable.ColumnProperty(name="year", type="string"),
-                glue.CfnTable.ColumnProperty(name="month", type="string"),
-                glue.CfnTable.ColumnProperty(name="day", type="string")
-            ]
+                    columns=[
+                        glue.CfnTable.ColumnProperty(name="finding_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="finding_type", type="string"),
+                        glue.CfnTable.ColumnProperty(name="title", type="string"),
+                        glue.CfnTable.ColumnProperty(name="severity", type="double"),
+                        glue.CfnTable.ColumnProperty(name="account_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="region", type="string"),
+                        glue.CfnTable.ColumnProperty(name="created_at", type="string"),
+                        glue.CfnTable.ColumnProperty(name="event_last_seen", type="string"),
+                        glue.CfnTable.ColumnProperty(name="remote_ip", type="string"),
+                        glue.CfnTable.ColumnProperty(name="remote_port", type="int"),
+                        glue.CfnTable.ColumnProperty(name="connection_direction", type="string"),
+                        glue.CfnTable.ColumnProperty(name="protocol", type="string"),
+                        glue.CfnTable.ColumnProperty(name="dns_domain", type="string"),
+                        glue.CfnTable.ColumnProperty(name="dns_protocol", type="string"),
+                        glue.CfnTable.ColumnProperty(name="scanned_ip", type="string"),
+                        glue.CfnTable.ColumnProperty(name="scanned_port", type="int"),
+                        glue.CfnTable.ColumnProperty(name="aws_api_service", type="string"),
+                        glue.CfnTable.ColumnProperty(name="aws_api_name", type="string"),
+                        glue.CfnTable.ColumnProperty(name="aws_api_caller_type", type="string"),
+                        glue.CfnTable.ColumnProperty(name="aws_api_error", type="string"),
+                        glue.CfnTable.ColumnProperty(name="aws_api_remote_ip", type="string"),
+                        glue.CfnTable.ColumnProperty(name="target_resource_arn", type="string"),
+                        glue.CfnTable.ColumnProperty(name="instance_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="instance_type", type="string"),
+                        glue.CfnTable.ColumnProperty(name="image_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="instance_tags", type="string"),
+                        glue.CfnTable.ColumnProperty(name="resource_region", type="string"),
+                        glue.CfnTable.ColumnProperty(name="access_key_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="principal_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="user_name", type="string"),
+                        glue.CfnTable.ColumnProperty(name="s3_bucket_name", type="string"),
+                        glue.CfnTable.ColumnProperty(name="date", type="string"),
+                        glue.CfnTable.ColumnProperty(name="service_raw", type="string"),
+                        glue.CfnTable.ColumnProperty(name="resource_raw", type="string"),
+                        glue.CfnTable.ColumnProperty(name="metadata_raw", type="string")
+                    ],
+                    location=f"s3://{self.processed_guardduty_findings_bucket.bucket_name}/processed-guardduty/",
+                    input_format="org.apache.hadoop.mapred.TextInputFormat",
+                    output_format="org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+                    serde_info=glue.CfnTable.SerdeInfoProperty(
+                        serialization_library="org.openx.data.jsonserde.JsonSerDe",
+                        parameters={"serialization.format": "1"}
+                    )
+             ),
+                partition_keys=[
+                    glue.CfnTable.ColumnProperty(name="type", type="string"),
+                    glue.CfnTable.ColumnProperty(name="year", type="string"),
+                    glue.CfnTable.ColumnProperty(name="month", type="string"),
+                    glue.CfnTable.ColumnProperty(name="day", type="string")
+                ]
+            )   
         )
-    )
+
+        # ENI Flow Logs Glue Table
+        self.glue_eni_flow_logs_table = glue.CfnTable(
+            self, "ENIFlowLogsTable",
+            catalog_id=self.account,
+            database_name="security_logs",
+            table_input=glue.CfnTable.TableInputProperty(
+                name="eni_flow_logs",
+                table_type="EXTERNAL_TABLE",
+                parameters={
+                    "classification": "json",
+                    "compressionType": "gzip"
+                },
+                storage_descriptor=glue.CfnTable.StorageDescriptorProperty(
+                    columns=[
+                        glue.CfnTable.ColumnProperty(name="version", type="int"),
+                        glue.CfnTable.ColumnProperty(name="account_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="interface_id", type="string"),
+                        glue.CfnTable.ColumnProperty(name="srcaddr", type="string"),
+                        glue.CfnTable.ColumnProperty(name="dstaddr", type="string"),
+                        glue.CfnTable.ColumnProperty(name="srcport", type="int"),
+                        glue.CfnTable.ColumnProperty(name="dstport", type="int"),
+                        glue.CfnTable.ColumnProperty(name="protocol", type="int"),
+                        glue.CfnTable.ColumnProperty(name="packets", type="bigint"),
+                        glue.CfnTable.ColumnProperty(name="bytes", type="bigint"),
+                        glue.CfnTable.ColumnProperty(name="start_time", type="bigint"),
+                        glue.CfnTable.ColumnProperty(name="end_time", type="bigint"),
+                        glue.CfnTable.ColumnProperty(name="action", type="string"),
+                        glue.CfnTable.ColumnProperty(name="log_status", type="string"),
+                        glue.CfnTable.ColumnProperty(name="timestamp_str", type="string")
+                    ],
+                    location=f"s3://{self.processed_cloudwatch_logs_bucket.bucket_name}/eni-flow-logs/",
+                    input_format="org.apache.hadoop.mapred.TextInputFormat",
+                    output_format="org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+                    serde_info=glue.CfnTable.SerdeInfoProperty(
+                        serialization_library="org.openx.data.jsonserde.JsonSerDe",
+                        parameters={"serialization.format": "1"}
+                    )
+                ),
+                partition_keys=[
+                    glue.CfnTable.ColumnProperty(name="partition_date", type="string")
+                ]
+            )
+        )
         
     def _create_cloudtrail_etl(self):
         self.cloudtrail_etl_function = _lambda.Function(
@@ -677,6 +723,49 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             s3.NotificationKeyFilter(prefix="exportedlogs/vpc-dns-logs/")
         )
     
+    def _create_cloudwatch_eni_etl(self):
+        self.cloudwatch_eni_etl_function = _lambda.Function(
+            self, "CloudWatchENIETLLambda",
+            function_name=f"cloudwatch-eni-etl-lambda",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="cloudwatch_eni_etl.lambda_handler",
+            code=_lambda.Code.from_asset("lambda/cloudwatch_eni_etl"),
+            timeout=Duration.minutes(5),
+            environment={
+                "SOURCE_BUCKET": self.log_list_bucket.bucket_name,
+                "DEST_BUCKET": self.processed_cloudwatch_logs_bucket.bucket_name,
+                "DATABASE_NAME": "security_logs",
+                "TABLE_NAME": "eni_flow_logs"
+            }
+        )
+
+        self.cloudwatch_eni_etl_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:PutObject"],
+                resources=[
+                    self.log_list_bucket.arn_for_objects("*"),
+                    self.processed_cloudwatch_logs_bucket.arn_for_objects("*")
+                ]
+            )
+        )
+
+        self.cloudwatch_eni_etl_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["glue:CreatePartition", "glue:GetPartition"],
+                resources=[
+                    f"arn:aws:glue:{self.region}:{self.account}:catalog",
+                    f"arn:aws:glue:{self.region}:{self.account}:database/security_logs",
+                    f"arn:aws:glue:{self.region}:{self.account}:table/security_logs/eni_flow_logs"
+                ]
+            )
+        )
+
+        self.log_list_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(self.cloudwatch_eni_etl_function),
+            s3.NotificationKeyFilter(prefix="exportedlogs/vpc-flow-logs/")
+        )
+
     def _create_guardduty_etl(self):
         self.guardduty_etl_function = _lambda.Function(
             self, "GuardDutyETLLambda",
@@ -781,3 +870,14 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         self.ir_alert_topic.add_subscription(
             sns_subscriptions.LambdaSubscription(self.alert_dispatch_function)
         )
+
+    def _create_security_group(self):
+        vpc_ids = self.node.try_get_context("vpc_ids") or []
+
+        if vpc_ids:
+          self.quarantine_sg = ec2.CfnSecurityGroup(
+                self, "QuarantineSecurityGroup",
+                group_description="Security Group for Quarantined Instances",
+                vpc_id=vpc_ids[0], 
+                group_name="QuarantineSecurityGroup"
+            )
