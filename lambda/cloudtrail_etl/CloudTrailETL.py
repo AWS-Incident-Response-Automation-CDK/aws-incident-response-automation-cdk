@@ -198,7 +198,14 @@ def is_high_risk_event(record):
         'DetachUserPolicy', 'CreateRole', 'DeleteRole', 'PutBucketPolicy', 
         'DeleteBucket', 'CreateAccessKey', 'DeleteAccessKey', 'ModifyDBInstance',
         'AuthorizeSecurityGroupIngress', 'RevokeSecurityGroupIngress', 
-        'RunInstances', 'TerminateInstances'
+        'RunInstances', 'TerminateInstances',
+        'AssociateIamInstanceProfile',    
+        'DisassociateIamInstanceProfile',   
+        'AuthorizeSecurityGroupIngress',    
+        'StopLogging',              
+        'DeleteTrail',               
+        'DeactivateMFADevice',             
+        'PutUserPolicy',
     ]
     
     if event_name in high_risk_events:
@@ -218,7 +225,10 @@ def is_privileged_action(event_name):
         'AttachUserPolicy', 'DetachUserPolicy', 'PutUserPolicy',
         'CreateAccessKey', 'DeleteAccessKey', 'UpdateAccessKey',
         'CreateGroup', 'DeleteGroup', 'AddUserToGroup',
-        'RemoveUserFromGroup', 'CreatePolicy', 'DeletePolicy'
+        'RemoveUserFromGroup', 'CreatePolicy', 'DeletePolicy',
+        'AssociateIamInstanceProfile',      
+        'DisassociateIamInstanceProfile',   
+        'UpdateTrail',               
     ]
     
     return event_name in privileged_actions
