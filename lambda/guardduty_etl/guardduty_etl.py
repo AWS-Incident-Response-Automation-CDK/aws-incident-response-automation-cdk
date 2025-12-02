@@ -88,6 +88,9 @@ def promote_resource_details(finding_resource):
             'target_resource_arn': instance_details.get('arn'),
             'instance_id': instance_details.get('instanceId'),
             'resource_region': instance_details.get('awsRegion'),
+            'instance_type': instance_details.get('instanceType'),
+            'image_id': instance_details.get('imageId'),
+            'instance_tags': instance_details.get('tags')
         }
     access_key_details = finding_resource.get('accessKeyDetails', {})
     if access_key_details:
@@ -174,7 +177,7 @@ def save_processed_data(processed_events, source_key):
     output_key = (
         f"processed-guardduty/type={type_partition}/"
         f"year={year}/month={month}/day={day}/"
-        f"{original_filename}_processed.jsonl"
+        f"{original_filename}_processed.jsonl.gz"
     )
     
     KEYS_TO_REMOVE = ['year', 'month', 'day', 'type_partition']

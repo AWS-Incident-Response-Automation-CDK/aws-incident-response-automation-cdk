@@ -11,6 +11,10 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_route53resolver as route53resolver,
     aws_kms as kms,
+    aws_events as events,
+    aws_events_targets as targets,
+    aws_sns as sns,  
+    aws_sns_subscriptions as sns_subscriptions,
     Duration,
     RemovalPolicy,
 )
@@ -35,6 +39,9 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         self._create_subscription_filter()
         self._create_cloudwatch_etl()
         self._create_guardduty_etl()
+        self._create_sns_topic()
+        self._create_alert_dispatch()
+        self._create_event_bridge_rules()
         if vpc_ids:
             self._create_flow_log_iam_role()
             self._create_vpc_flow_logs(vpc_ids)
@@ -101,12 +108,11 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             iam.PolicyStatement(
                 sid="AllowGuardDutyEncryptFindings",
                 principals=[iam.ServicePrincipal("guardduty.amazonaws.com")],
-                actions=["kms:GenerateDataKey"],
+                actions=["kms:GenerateDataKey", "kms:Encrypt", "kms:Decrypt", "kms:CreateGrant"],
                 resources=["*"],
                 conditions={
                     "StringEquals": {
                         "aws:SourceAccount": self.account,
-                        "aws:SourceArn": f"arn:aws:guardduty:{self.region}:{self.account}:detector/*"
                     }
                 }
             )
@@ -118,22 +124,19 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         
         GD_ARN = f"arn:aws:guardduty:{self.region}:{self.account}:detector/{GD_DETECTOR_ID}"
 
-        # CT_ARN = self.cloudtrail.attr_arn
-
-
         bucket_arn = self.log_list_bucket.bucket_arn
         bucket_objects_arn = self.log_list_bucket.arn_for_objects("*")
 
-        self.log_list_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                sid="DenyNonHTTPSAccess",
-                effect=iam.Effect.DENY,
-                principals=[iam.AnyPrincipal()], 
-                actions=["s3:*"],
-                resources=[bucket_arn, bucket_objects_arn],
-                conditions={"Bool": {"aws:SecureTransport": "false"}}
-            )
-        )
+        # self.log_list_bucket.add_to_resource_policy(
+        #     iam.PolicyStatement(
+        #         sid="DenyNonHTTPSAccess",
+        #         effect=iam.Effect.DENY,
+        #         principals=[iam.AnyPrincipal()], 
+        #         actions=["s3:*"],
+        #         resources=[bucket_arn, bucket_objects_arn],
+        #         conditions={"Bool": {"aws:SecureTransport": "false"}}
+        #     )
+        # )
 
         self.log_list_bucket.add_to_resource_policy(
             iam.PolicyStatement(
@@ -192,42 +195,50 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             )
         )
         
-        # CT_PRINCIPAL = iam.ServicePrincipal("cloudtrail.amazonaws.com")
-        
-        # self.log_list_bucket.add_to_resource_policy(
-        #     iam.PolicyStatement(
-        #         sid="AllowCloudTrailAclCheck",
-        #         effect=iam.Effect.ALLOW,
-        #         principals=[CT_PRINCIPAL],
-        #         actions=["s3:GetBucketAcl"],
-        #         resources=[bucket_arn],
-        #         conditions={"StringEquals": {"AWS:SourceArn": CT_ARN}}
-        #     )
-        # )
+        CT_PRINCIPAL = iam.ServicePrincipal("cloudtrail.amazonaws.com")
+        CT_ARN = f"arn:aws:cloudtrail:{self.region}:{self.account}:trail/*"
 
-        # self.log_list_bucket.add_to_resource_policy(
-        #     iam.PolicyStatement(
-        #         sid="AllowCloudTrailWrite",
-        #         effect=iam.Effect.ALLOW,
-        #         principals=[CT_PRINCIPAL],
-        #         actions=["s3:PutObject"],
-        #         resources=[
-        #             self.log_list_bucket.arn_for_objects(f"AWSLogs/{self.account}/*")
-        #         ],
-        #         conditions={
-        #             "StringEquals": {
-        #                 "s3:x-amz-acl": "bucket-owner-full-control",
-        #                 "AWS:SourceArn": CT_ARN
-        #             }
-        #         }
-        #     )
-        # )
+        self.log_list_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowCloudTrailAclCheck",
+                effect=iam.Effect.ALLOW,
+                principals=[CT_PRINCIPAL],
+                actions=["s3:GetBucketAcl"],
+                resources=[bucket_arn],
+                conditions={"StringEquals": {
+                    "aws:SourceAccount": self.account
+                    },
+                    "ArnLike": {
+                        "aws:SourceArn": CT_ARN
+                    }
+                }
+            )
+        )
+
+        self.log_list_bucket.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowCloudTrailWrite",
+                effect=iam.Effect.ALLOW,
+                principals=[CT_PRINCIPAL],
+                actions=["s3:PutObject"],
+                resources=[
+                    self.log_list_bucket.arn_for_objects(f"AWSLogs/{self.account}/*")
+                ],
+                conditions={
+                    "StringEquals": {
+                        "s3:x-amz-acl": "bucket-owner-full-control",
+                        "aws:SourceAccount": self.account
+                    },
+                    "ArnLike": {"aws:SourceArn": CT_ARN}
+                }
+            )
+        )
 
     def _enable_guardduty(self):
         self.guardduty_detector = guardduty.CfnDetector(
             self, "GuardDutyDetector",
             enable=True,
-            finding_publishing_frequency="ONE_HOUR"
+            finding_publishing_frequency="FIFTEEN_MINUTES"
         )
 
         self.guardduty_publishing_destination = guardduty.CfnPublishingDestination(
@@ -250,15 +261,62 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         
     def _create_cloudtrail(self):
       
-        self.cloudtrail = cloudtrail.Trail( 
+        # self.cloudtrail = cloudtrail.Trail( 
+        #     self, "CloudTrail",
+        #     trail_name=f"incident-response-cloudtrail-{self.account}-{self.region}",
+        #     is_multi_region_trail=True,
+        #     bucket=self.log_list_bucket,            
+        #     enable_file_validation=True,
+        #     management_events=cloudtrail.ReadWriteType.WRITE_ONLY,
+        # )
+        
+        self.cloudtrail= cloudtrail.CfnTrail(
             self, "CloudTrail",
-            trail_name=f"incident-response-cloudtrail-{self.account}-{self.region}",
             is_multi_region_trail=True,
-            bucket=self.log_list_bucket,            
-            enable_file_validation=True,
-            management_events=cloudtrail.ReadWriteType.WRITE_ONLY,
-        )
+            include_global_service_events=True,
+            s3_bucket_name=self.log_list_bucket.bucket_name,
+            trail_name=f"incident-responses-cloudtrail-{self.account}-{self.region}",
+            enable_log_file_validation=True,
+            is_logging=True,
+            advanced_event_selectors=[
+                cloudtrail.CfnTrail.AdvancedEventSelectorProperty(
+                    name="Security Management Events",
+                    field_selectors=[
+                        cloudtrail.CfnTrail.AdvancedFieldSelectorProperty(
+                            field="eventCategory",
+                            equal_to=["Management"]
+                        ),
+                    ]
+                ),
 
+                cloudtrail.CfnTrail.AdvancedEventSelectorProperty(
+                    name="Exclude IR Log Events",
+                    field_selectors=[
+                        cloudtrail.CfnTrail.AdvancedFieldSelectorProperty(
+                            field="eventCategory",
+                            equal_to=["Data"]
+                        ),
+
+                        cloudtrail.CfnTrail.AdvancedFieldSelectorProperty(
+                            field="resources.type",
+                            equal_to=["AWS::S3::Object"]
+                        ),
+
+                        cloudtrail.CfnTrail.AdvancedFieldSelectorProperty(
+                            field="resources.ARN",
+                            not_starts_with=[
+                                f"{self.log_list_bucket.bucket_arn}/",
+                                f"{self.processed_cloudtrail_logs_bucket.bucket_arn}/",
+                                f"{self.processed_cloudwatch_logs_bucket.bucket_arn}/",
+                                f"{self.processed_guardduty_findings_bucket.bucket_arn}/",
+                                f"{self.athena_query_results_bucket.bucket_arn}/"
+                            ]  
+                        ),    
+                    ]
+                )
+            ]
+        )   
+        
     def _create_glue_table(self):
         self.glue_database = glue.CfnDatabase(
             self, "SecurityLogsDatabase",
@@ -413,6 +471,9 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                     glue.CfnTable.ColumnProperty(name="aws_api_remote_ip", type="string"),
                     glue.CfnTable.ColumnProperty(name="target_resource_arn", type="string"),
                     glue.CfnTable.ColumnProperty(name="instance_id", type="string"),
+                    glue.CfnTable.ColumnProperty(name="instance_type", type="string"),
+                    glue.CfnTable.ColumnProperty(name="image_id", type="string"),
+                    glue.CfnTable.ColumnProperty(name="instance_tags", type="string"),
                     glue.CfnTable.ColumnProperty(name="resource_region", type="string"),
                     glue.CfnTable.ColumnProperty(name="access_key_id", type="string"),
                     glue.CfnTable.ColumnProperty(name="principal_id", type="string"),
@@ -664,4 +725,59 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(self.guardduty_etl_function),
             s3.NotificationKeyFilter(prefix=f"AWSLogs/{self.account}/GuardDuty/")
+        )
+
+    def _create_sns_topic(self):
+        self.ir_alert_topic = sns.Topic(
+            self, "IRAlertTopic",
+            topic_name="IncidentResponseAlerts"
+        )
+
+       
+
+    def _create_event_bridge_rules(self):
+        self.guardduty_findings_rule = events.Rule(
+            self, "GuardDutyFindingsRule",
+            rule_name="IncidentResponseAlert",
+            event_pattern=events.EventPattern(
+                source=["aws.guardduty"],
+                detail_type=["GuardDuty Finding"]
+            )
+        )
+        self.guardduty_findings_rule.add_target(
+            targets.SnsTopic(self.ir_alert_topic)
+        )
+
+    def _create_alert_dispatch(self):
+        alert_emails= self.node.try_get_context("alert_email") or []
+
+        self.alert_dispatch_function = _lambda.Function(
+            self, "AlertDispatchLambda",
+            function_name="ir-alert-dispatch",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="alert_dispatch.lambda_handler",
+            code=_lambda.Code.from_asset("lambda/alert_dispatch"),
+            timeout=Duration.minutes(5),
+            environment={
+                "RECIPIENT_EMAIL": ",".join(alert_emails),
+                "SENDER_EMAIL": self.node.try_get_context("sender_email") or ""
+            }
+        )
+
+        self.alert_dispatch_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["sns:Publish"],
+                resources=[self.ir_alert_topic.topic_arn]
+            )
+        )
+
+        self.alert_dispatch_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["ses:SendEmail", "ses:SendRawEmail"],
+                resources=["*"]
+            )
+        )
+
+        self.ir_alert_topic.add_subscription(
+            sns_subscriptions.LambdaSubscription(self.alert_dispatch_function)
         )
