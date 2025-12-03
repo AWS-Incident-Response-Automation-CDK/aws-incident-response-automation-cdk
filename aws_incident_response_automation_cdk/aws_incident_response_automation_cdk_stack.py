@@ -15,6 +15,7 @@ from aws_cdk import (
     aws_events_targets as targets,
     aws_sns as sns,  
     aws_sns_subscriptions as sns_subscriptions,
+    aws_kinesisfirehose as firehose,
     Duration,
     RemovalPolicy,
 )
@@ -34,6 +35,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         self._create_cloudtrail()
         self._add_bucket_policies()
         self._create_glue_table()
+        self._create_firehose_log_stream()
         self._create_cloudwatch_export_lambda()
         self._create_cloudtrail_etl()
         self._create_subscription_filter()
@@ -48,7 +50,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             self._create_flow_log_iam_role()
             self._create_vpc_flow_logs(vpc_ids)
             self._create_dns_query_logging(vpc_ids)
-
 
     def _create_storage_infrastructure(self):
 
@@ -337,7 +338,14 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 table_type="EXTERNAL_TABLE",
                 parameters={
                     "classification": "json",
-                    "compressionType": "gzip"
+                    "compressionType": "gzip",
+                    "projection.enabled": "true",
+                    "projection.date.type": "date", 
+                    "projection.date.range": "2025-01-01,NOW",
+                    "projection.date.format": "yyyy-MM-dd",
+                    "projection.date.interval": "1",
+                    "projection.date.interval.unit": "DAYS",
+                    "storage.location.template": f"s3://{self.processed_cloudtrail_logs_bucket.bucket_name}/processed-cloudtrail/date=${{date}}/"
                 },
                 storage_descriptor=glue.CfnTable.StorageDescriptorProperty(
                     columns=[
@@ -355,7 +363,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                         glue.CfnTable.ColumnProperty(name="serviceEventDetails", type="string"),
                         glue.CfnTable.ColumnProperty(name="errorCode", type="string"),
                         glue.CfnTable.ColumnProperty(name="errorMessage", type="string"),
-                        glue.CfnTable.ColumnProperty(name="date", type="string"),
                         glue.CfnTable.ColumnProperty(name="hour", type="string"),
                         glue.CfnTable.ColumnProperty(name="userType", type="string"),
                         glue.CfnTable.ColumnProperty(name="userName", type="string"),
@@ -385,9 +392,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                     )
                 ),
                 partition_keys=[
-                    glue.CfnTable.ColumnProperty(name="year", type="string"),
-                    glue.CfnTable.ColumnProperty(name="month", type="string"),
-                    glue.CfnTable.ColumnProperty(name="day", type="string")
+                   glue.CfnTable.ColumnProperty(name="date", type="string"),
                 ]
             )
         )
@@ -402,7 +407,14 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 table_type="EXTERNAL_TABLE",
                 parameters={
                     "classification": "json",
-                    "compressionType": "gzip"
+                    "compressionType": "gzip",
+                    "projection.enabled": "true",
+                    "projection.date.type": "date",
+                    "projection.date.range": "2025-01-01,NOW",
+                    "projection.date.format": "yyyy-MM-dd",
+                    "projection.date.interval": "1",
+                    "projection.date.interval.unit": "DAYS",
+                    "storage.location.template": f"s3://{self.processed_cloudwatch_logs_bucket.bucket_name}/vpc-logs/date=${{date}}/"
                 },
                 storage_descriptor=glue.CfnTable.StorageDescriptorProperty(
                     columns=[
@@ -427,7 +439,9 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                     output_format="org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
                     serde_info=glue.CfnTable.SerdeInfoProperty(
                         serialization_library="org.openx.data.jsonserde.JsonSerDe",
-                        parameters={"serialization.format": "1"}
+                        parameters={
+                            "serialization.format": "1",
+                            "ignore.malformed.json": "true"}
                     )
                 ),
                 partition_keys=[
@@ -513,7 +527,14 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 table_type="EXTERNAL_TABLE",
                 parameters={
                     "classification": "json",
-                    "compressionType": "gzip"
+                    "compressionType": "gzip",
+                    "projection.enabled": "true",
+                    "projection.date.type": "date",
+                    "projection.date.range": "2025-01-01,NOW",
+                    "projection.date.format": "yyyy-MM-dd",
+                    "projection.date.interval": "1",
+                    "projection.date.interval.unit": "DAYS",
+                    "storage.location.template": f"s3://{self.processed_cloudwatch_logs_bucket.bucket_name}/eni-flow-logs/date=${{date}}/"
                 },
                 storage_descriptor=glue.CfnTable.StorageDescriptorProperty(
                     columns=[
@@ -542,11 +563,100 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                     )
                 ),
                 partition_keys=[
-                    glue.CfnTable.ColumnProperty(name="partition_date", type="string")
+                    glue.CfnTable.ColumnProperty(name="date", type="string")
                 ]
             )
         )
-        
+
+    def _create_firehose_log_stream(self):
+
+        self.cloudwatch_firehose_role = iam.Role(
+            self, "CloudWatchFirehoseRole",
+            assumed_by=iam.ServicePrincipal("firehose.amazonaws.com"),
+            inline_policies={
+                "FirehosePolicy": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=["s3:PutObject", "s3:GetBucketLocation", "s3:ListBucket"],
+                            resources=[
+                                self.processed_cloudwatch_logs_bucket.bucket_arn,
+                                self.processed_cloudwatch_logs_bucket.arn_for_objects("*")
+                            ]
+                        )
+                    ]
+                )
+            }
+        )
+
+        self.cloudtrail_firehose_role = iam.Role(
+            self, "CloudTrailFirehoseRole",
+            assumed_by=iam.ServicePrincipal("firehose.amazonaws.com"),
+            inline_policies={
+                "FirehosePolicy": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=["s3:PutObject", "s3:GetBucketLocation", "s3:ListBucket"],
+                            resources=[
+                                self.processed_cloudtrail_logs_bucket.bucket_arn,
+                                self.processed_cloudtrail_logs_bucket.arn_for_objects("*")
+                            ]
+                        )
+                    ]
+                )
+            }
+        )
+
+        self.vpc_dns_firehose_stream= firehose.CfnDeliveryStream(
+            self, "VpcDnsFirehoseStream",
+            delivery_stream_name="vpc-dns-firehose-stream",
+            delivery_stream_type="DirectPut",
+            extended_s3_destination_configuration=firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
+                bucket_arn=self.processed_cloudwatch_logs_bucket.bucket_arn,
+                role_arn=self.cloudwatch_firehose_role.role_arn,
+                prefix="vpc-logs/date=!{timestamp:yyyy-MM-dd}/",
+                error_output_prefix="vpc-logs/errors/date=!{timestamp:yyyy-MM-dd}/error-type=!{firehose:error-output-type}/",
+                buffering_hints=firehose.CfnDeliveryStream.BufferingHintsProperty(
+                    size_in_m_bs=10,
+                    interval_in_seconds=300
+                ),
+                compression_format="GZIP",
+            )
+        )
+
+        self.vpc_flow_firehose_stream= firehose.CfnDeliveryStream(
+            self, "VpcFlowFirehoseStream",
+            delivery_stream_name="vpc-flow-firehose-stream",
+            delivery_stream_type="DirectPut",
+            extended_s3_destination_configuration=firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
+                bucket_arn=self.processed_cloudwatch_logs_bucket.bucket_arn,
+                role_arn=self.cloudwatch_firehose_role.role_arn,
+                prefix="eni-flow-logs/date=!{timestamp:yyyy-MM-dd}/",
+                error_output_prefix="eni-flow-logs/errors/date=!{timestamp:yyyy-MM-dd}/error-type=!{firehose:error-output-type}/",
+                buffering_hints=firehose.CfnDeliveryStream.BufferingHintsProperty(
+                    size_in_m_bs=10,
+                    interval_in_seconds=300
+                ),
+                compression_format="GZIP",
+            )
+        )
+
+        self.cloudtrail_firehose_stream= firehose.CfnDeliveryStream(
+            self, "CloudTrailFirehoseStream",
+            delivery_stream_name="cloudtrail-firehose-stream",
+            delivery_stream_type="DirectPut",
+            extended_s3_destination_configuration=firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
+                bucket_arn=self.processed_cloudtrail_logs_bucket.bucket_arn,
+                role_arn=self.cloudtrail_firehose_role.role_arn,
+                prefix="processed-cloudtrail/date=!{timestamp:yyyy-MM-dd}/",
+                error_output_prefix="processed-cloudtrail/errors/date=!{timestamp:yyyy-MM-dd}/error-type=!{firehose:error-output-type}/",
+                buffering_hints=firehose.CfnDeliveryStream.BufferingHintsProperty(
+                    size_in_m_bs=10,
+                    interval_in_seconds=300
+                ),
+                compression_format="GZIP",
+            )
+        )
+
     def _create_cloudtrail_etl(self):
         self.cloudtrail_etl_function = _lambda.Function(
             self, "CloudTrailETLLambda",
@@ -556,29 +666,23 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             code=_lambda.Code.from_asset("lambda/cloudtrail_etl"),
             timeout=Duration.minutes(5),
             environment={
-                "DESTINATION_BUCKET": self.processed_cloudtrail_logs_bucket.bucket_name,
-                "DATABASE_NAME": "security_logs",
-                "TABLE_NAME": "processed_cloudtrail",
-                "S3_LOCATION": f"s3://{self.processed_cloudtrail_logs_bucket.bucket_name}/processed-cloudtrail/"
+                "FIREHOSE_STREAM_NAME": self.cloudtrail_firehose_stream.delivery_stream_name,
             }
         )
         self.cloudtrail_etl_function.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:PutObject"],
+                actions=["s3:GetObject"],
                 resources=[
                     self.log_list_bucket.arn_for_objects("*"),
-                    self.processed_cloudtrail_logs_bucket.arn_for_objects("*")
                 ]
             )
         )
 
         self.cloudtrail_etl_function.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["glue:CreatePartition", "glue:GetPartition"],
+                actions=["firehose:PutRecord", "firehose:PutRecordBatch"],
                 resources=[
-                    f"arn:aws:glue:{self.region}:{self.account}:catalog",
-                    f"arn:aws:glue:{self.region}:{self.account}:database/security_logs",
-                    f"arn:aws:glue:{self.region}:{self.account}:table/security_logs/processed_cloudtrail"
+                    self.cloudtrail_firehose_stream.attr_arn
                 ]
             )
         )
@@ -689,30 +793,24 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             code=_lambda.Code.from_asset("lambda/cloudwatch_etl"),
             timeout=Duration.minutes(5),
             environment={
-                "SOURCE_BUCKET": self.log_list_bucket.bucket_name,
-                "DEST_BUCKET": self.processed_cloudwatch_logs_bucket.bucket_name,
-                "DATABASE_NAME": "security_logs",
-                "TABLE_NAME": "vpc_logs"
+                "FIREHOSE_STREAM_NAME": self.vpc_dns_firehose_stream.delivery_stream_name,
             }
         )
 
         self.cloudwatch_etl_function.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:PutObject"],
+                actions=["s3:GetObject"],
                 resources=[
                     self.log_list_bucket.arn_for_objects("*"),
-                    self.processed_cloudwatch_logs_bucket.arn_for_objects("*")
                 ]
             )
         )
 
         self.cloudwatch_etl_function.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["glue:CreatePartition", "glue:GetPartition"],
+                actions=["firehose:PutRecord", "firehose:PutRecordBatch"],
                 resources=[
-                    f"arn:aws:glue:{self.region}:{self.account}:catalog",
-                    f"arn:aws:glue:{self.region}:{self.account}:database/security_logs",
-                    f"arn:aws:glue:{self.region}:{self.account}:table/security_logs/vpc_logs"
+                    self.vpc_dns_firehose_stream.attr_arn
                 ]
             )
         )
@@ -732,30 +830,24 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             code=_lambda.Code.from_asset("lambda/cloudwatch_eni_etl"),
             timeout=Duration.minutes(5),
             environment={
-                "SOURCE_BUCKET": self.log_list_bucket.bucket_name,
-                "DEST_BUCKET": self.processed_cloudwatch_logs_bucket.bucket_name,
-                "DATABASE_NAME": "security_logs",
-                "TABLE_NAME": "eni_flow_logs"
+                "FIREHOSE_STREAM_NAME": self.vpc_flow_firehose_stream.delivery_stream_name,
             }
         )
 
         self.cloudwatch_eni_etl_function.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:PutObject"],
+                actions=["s3:GetObject"],
                 resources=[
                     self.log_list_bucket.arn_for_objects("*"),
-                    self.processed_cloudwatch_logs_bucket.arn_for_objects("*")
                 ]
             )
         )
 
         self.cloudwatch_eni_etl_function.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["glue:CreatePartition", "glue:GetPartition"],
+                actions=["firehose:PutRecord", "firehose:PutRecordBatch"],
                 resources=[
-                    f"arn:aws:glue:{self.region}:{self.account}:catalog",
-                    f"arn:aws:glue:{self.region}:{self.account}:database/security_logs",
-                    f"arn:aws:glue:{self.region}:{self.account}:table/security_logs/eni_flow_logs"
+                    self.vpc_flow_firehose_stream.attr_arn
                 ]
             )
         )
@@ -821,9 +913,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             self, "IRAlertTopic",
             topic_name="IncidentResponseAlerts"
         )
-
-       
-
+     
     def _create_event_bridge_rules(self):
         self.guardduty_findings_rule = events.Rule(
             self, "GuardDutyFindingsRule",
@@ -849,7 +939,8 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             timeout=Duration.minutes(5),
             environment={
                 "RECIPIENT_EMAIL": ",".join(alert_emails),
-                "SENDER_EMAIL": self.node.try_get_context("sender_email") or ""
+                "SENDER_EMAIL": self.node.try_get_context("sender_email") or "",
+                "SLACK_WEBHOOK_URL": self.node.try_get_context("slack_webhook_url") or ""
             }
         )
 

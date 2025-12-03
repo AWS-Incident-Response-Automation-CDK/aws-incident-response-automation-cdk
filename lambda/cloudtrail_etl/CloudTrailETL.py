@@ -7,39 +7,9 @@ from urllib.parse import unquote_plus
 from io import BytesIO
 
 s3_client = boto3.client('s3')
-glue_client = boto3.client('glue')
+firehose = boto3.client('firehose')
 
-DATABASE_NAME = os.environ.get('DATABASE_NAME')
-TABLE_NAME = os.environ.get('TABLE_NAME')
-S3_LOCATION = os.environ.get('S3_LOCATION')
-DESTINATION_BUCKET = os.environ.get('DESTINATION_BUCKET')
-
-def add_partition(date_str):
-    year, month, day = date_str.split('-')
-    
-    try:
-        glue_client.create_partition(
-            DatabaseName=DATABASE_NAME,
-            TableName=TABLE_NAME,
-            PartitionInput={
-                'Values': [year, month, day],
-                'StorageDescriptor': {
-                    'Location': f'{S3_LOCATION}year={year}/month={month}/day={day}/',
-                    'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
-                    'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
-                    'SerdeInfo': {
-                        'SerializationLibrary': 'org.openx.data.jsonserde.JsonSerDe',
-                        'Parameters': {'serialization.format': '1'}
-                    }
-                }
-            }
-        )
-        print(f"Added partition for {date_str}")
-    except glue_client.exceptions.AlreadyExistsException:
-        print(f"Partition for {date_str} already exists")
-    except Exception as e:
-        # Removed the specific "Table is projected" check
-        print(f"Error adding partition for {date_str}: {str(e)}")
+FIREHOSE_STREAM_NAME = os.environ.get('FIREHOSE_STREAM_NAME')
 
 def normalize_user_identity(user_identity):
     if not user_identity:
@@ -241,39 +211,10 @@ def is_data_access_event(event_name):
     
     return event_name in data_events
 
-def save_processed_data(processed_events, source_key):
-    
-    if not processed_events:
-        return
-
-    first_event = processed_events[0]
-    date_str = first_event.get('date', datetime.now().strftime('%Y-%m-%d'))
-    
-    original_filename = source_key.split('/')[-1].replace('.json.gz', '').replace('.json', '')
-    
-    output_key = f"processed-cloudtrail/year={date_str[:4]}/month={date_str[5:7]}/day={date_str[8:10]}/{original_filename}_processed.jsonl.gz"
-
-    json_lines = ""
-
-    for event in processed_events:
-        json_lines += json.dumps(event) + "\n"
-
-    compressed_data = gzip.compress(json_lines.encode('utf-8'))
-
-    s3_client.put_object(
-        Bucket=DESTINATION_BUCKET,
-        Key=output_key,
-        Body=compressed_data,
-        ContentType='application/json',
-        ContentEncoding='gzip'
-    )
-    
-    print(f"Saved processed data to: s3://{DESTINATION_BUCKET}/{output_key}")
-    
-    add_partition(date_str)
-
-
 def lambda_handler(event, context):
+    print(f"Received S3 Event. Records: {len(event.get('Records', []))}")
+    
+    firehose_records = []
 
     for record in event['Records']:
         bucket = record['s3']['bucket']['name']
@@ -284,15 +225,33 @@ def lambda_handler(event, context):
         try:
             processed_events = process_cloudtrail_log(bucket, key)
             
-            save_processed_data(processed_events, key) 
+            for event_data in processed_events:
+                json_row = json.dumps(event_data) + "\n"
+                firehose_records.append({'Data': json_row})
             
             print(f"Successfully processed {len(processed_events)} events from {key}")
             
         except Exception as e:
             print(f"Error processing {key}: {str(e)}")
-            raise e 
-    
-    return {
-        'statusCode': 200,
-        'body': json.dumps('CloudTrail logs processed successfully')
-    }
+            raise e
+
+    # Send to Firehose in batches of 500
+    if firehose_records:
+        total_records = len(firehose_records)
+        print(f"Sending {total_records} records to Firehose...")
+        
+        batch_size = 500
+        for i in range(0, total_records, batch_size):
+            batch = firehose_records[i:i + batch_size]
+            try:
+                response = firehose.put_record_batch(
+                    DeliveryStreamName=FIREHOSE_STREAM_NAME,
+                    Records=batch
+                )
+                if response['FailedPutCount'] > 0:
+                    print(f"Warning: {response['FailedPutCount']} records failed")
+            except Exception as e:
+                print(f"Firehose error: {e}")
+
+    return {"status": "ok", "total_records": len(firehose_records)}
+

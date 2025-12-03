@@ -5,15 +5,13 @@ import os
 from datetime import datetime
 
 s3 = boto3.client("s3")
-glue = boto3.client("glue")
+firehose = boto3.client("firehose")
 
 # --------------------------------------------------
 # CONFIGURATION
 # --------------------------------------------------
 
-DEST_BUCKET = os.environ.get("DEST_BUCKET") 
-DATABASE_NAME = os.environ.get("DATABASE_NAME")
-TABLE_NAME = os.environ.get("TABLE_NAME")
+FIREHOSE_STREAM_NAME = os.environ.get("FIREHOSE_STREAM_NAME")
 
 # ----------------------------- UTILS -----------------------------
 
@@ -29,55 +27,20 @@ def safe_int(x):
         return None
 
 
-def ensure_partition(partition_value):
-    try:
-        glue.get_partition(
-            DatabaseName=DATABASE_NAME, 
-            TableName=TABLE_NAME, 
-            PartitionValues=[partition_value]
-        )
-        return
-    except glue.exceptions.EntityNotFoundException:
-        pass
-
-    glue.create_partition(
-        DatabaseName=DATABASE_NAME,
-        TableName=TABLE_NAME,
-        PartitionInput={
-            "Values": [partition_value],
-            "StorageDescriptor": {
-                "Location": f"s3://{DEST_BUCKET}/eni-flow-logs/partition_date={partition_value}/",
-                "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
-                "OutputFormat": "org.apache.hadoop.hive.ql.io.IgnoreKeyTextOutputFormat",
-                "SerdeInfo": {"SerializationLibrary": "org.openx.data.jsonserde.JsonSerDe"},
-            }
-        }
-    )
-    print("Created partition:", partition_value)
-
-# -------------------------- PARSE LOGIC (ĐÃ SỬA) --------------------------
-
 def parse_flow_log_line(line):
     parts = line.strip().split(' ')
     
-    # Flow Log V2 tiêu chuẩn thường có 14 trường
     if len(parts) < 14:
         return None
 
     try:
-        # [REVIEW]: Lấy Start Time (cột index 10) để tính ra ngày Partition
         start_timestamp = safe_int(parts[10])
-        
+        time_str = None
         if start_timestamp:
             dt_object = datetime.fromtimestamp(start_timestamp)
             time_str = dt_object.strftime('%Y-%m-%d %H:%M:%S')
-            date_part = dt_object.strftime('%Y-%m-%d') # Ví dụ: 2025-10-20
-        else:
-            time_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-            date_part = datetime.utcnow().strftime('%Y-%m-%d')
 
         record = {
-            # [REVIEW]: MAP CHÍNH XÁC VỊ TRÍ CỘT
             "version": safe_int(parts[0]),       # Cột 1: version (int)
             "account_id": parts[1],              # Cột 2: account_id (STRING)
             "interface_id": parts[2],            # Cột 3: eni-...
@@ -92,85 +55,61 @@ def parse_flow_log_line(line):
             "end_time": safe_int(parts[11]),
             "action": parts[12],
             "log_status": parts[13],
-            "timestamp_str": time_str,
-            "partition_date_value": date_part    # Trường tạm để tạo partition folder
+            "timestamp_str": time_str
         }
         return record
     except Exception as e:
         print(f"Error parsing line: {e}")
         return None
 
-# ----------------------------- MAIN LAMBDA -----------------------------
-
 def lambda_handler(event, context):
-    print("Event received")
-    
-    if "Records" not in event:
-        return {"statusCode": 400, "body": "Invalid event"}
+    print(f"Received S3 Event. Records: {len(event.get('Records', []))}")
+    firehose_records = []
 
-    processed_count = 0
-    
-    for record in event["Records"]:
+    # Duyệt qua các file S3 gửi về
+    for record in event.get("Records", []):
+        if "s3" not in record: continue
+
         bucket = record["s3"]["bucket"]["name"]
         key = record["s3"]["object"]["key"]
 
         # Chỉ xử lý file .gz
-        if key.endswith(".gz"): 
-            print(f"Processing file: {key}")
-            original_filename = os.path.basename(key)
-            new_filename = f"eni-{original_filename.replace('.gz', '.jsonl.gz')}"
+        if not key.endswith(".gz"):
+            print(f"Skipping non-gz: {key}")
+            continue
 
-            # 1. Đọc dữ liệu
-            text_content = read_gz(bucket, key)
-            
-            # 2. Parse từng dòng
-            parsed_records = []
-            partition_date = None
+        print(f"Processing: {key}")
+        
+        # Đọc nội dung
+        content = read_gz(bucket, key)
+        if not content: continue
 
-            for line in text_content.splitlines():
-                rec = parse_flow_log_line(line)
-                if rec:
-                    # Lấy ngày của bản ghi đầu tiên làm ngày cho partition của file này
-                    if partition_date is None:
-                        partition_date = rec["partition_date_value"]
-                    
-                    # Xóa trường tạm trước khi lưu vào JSON
-                    del rec["partition_date_value"]
-                    parsed_records.append(rec)
-            
-            if not parsed_records:
-                print(f"No valid records in {key}")
-                continue
+        # Parse từng dòng log
+        for line in content.splitlines():
+            rec = parse_flow_log_line(line)
+            if not rec: continue
 
-            # Fallback nếu không parse được ngày
-            if not partition_date:
-                partition_date = datetime.utcnow().strftime('%Y-%m-%d')
+            # Chuyển thành JSON string và thêm xuống dòng (\n)
+            json_row = json.dumps(rec) + "\n"
             
-            # 3. Upload file kết quả vào đúng partition
-            # JSON Lines format
-            json_body = "\n".join(json.dumps(r) for r in parsed_records)
-            compressed_body = gzip.compress(json_body.encode("utf-8"))
-            
-            # [REVIEW]: Folder đích sẽ là: partition_date=2025-10-20/...
-            dest_key = f"eni-flow-logs/partition_date={partition_date}/{new_filename}"
-            
-            s3.put_object(
-                Bucket=DEST_BUCKET,
-                Key=dest_key,
-                Body=compressed_body,
-                ContentType="application/x-ndjson",
-                ContentEncoding="gzip"
-            )
-            print(f"--> Uploaded: {dest_key}")
+            firehose_records.append({'Data': json_row})
 
-            # 4. Cập nhật Glue Catalog
-            ensure_partition(partition_date)
-            
-            processed_count += 1
-        else:
-            print(f"Skipping file: {key}")
+    # Đẩy sang Firehose (Batching 500 dòng)
+    if firehose_records:
+        total = len(firehose_records)
+        print(f"Flushing {total} records to Firehose...")
+        
+        batch_size = 500
+        for i in range(0, total, batch_size):
+            batch = firehose_records[i:i + batch_size]
+            try:
+                response = firehose.put_record_batch(
+                    DeliveryStreamName=FIREHOSE_STREAM_NAME,
+                    Records=batch
+                )
+                if response['FailedPutCount'] > 0:
+                    print(f"Warning: {response['FailedPutCount']} records failed.")
+            except Exception as e:
+                print(f"Firehose API Error: {e}")
 
-    return {
-        "statusCode": 200,
-        "body": json.dumps(f"Processed {processed_count} files.")
-    }
+    return {"status": "ok", "count": len(firehose_records)}

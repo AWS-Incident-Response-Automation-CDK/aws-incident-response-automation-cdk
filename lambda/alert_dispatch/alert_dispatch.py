@@ -14,8 +14,7 @@ import html
 
 # --- Slack ENV ---
 
-# SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
-# SLACK_CHANNEL_ID = os.environ.get("SLACK_CHANNEL_ID")
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 
 # --- SES ENV ---
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
@@ -83,66 +82,59 @@ ses_client = boto3.client('ses', region_name=AWS_REGION)
 # ====================================================================
 # SEND TO SLACK
 # ====================================================================
-# def send_to_slack(finding):
-#     if not SLACK_BOT_TOKEN or not SLACK_CHANNEL_ID:
-#         logger.warning("Slack ENV missing. Skipping.")
-#         return
 
-#     url = "https://slack.com/api/chat.postMessage"
+def send_to_slack(finding):
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("Slack ENV missing. Skipping.")
+        return
 
-#     severity_num = finding.get("severity", 0)
-#     title        = finding.get("title", "No Title")
-#     description  = finding.get("description", "No Description")
-#     region       = finding.get("region", "N/A")
-#     account_id   = finding.get("accountId", "N/A")
-#     finding_type = finding.get("type", "N/A")
+    severity_num = finding.get("severity", 0)
+    title        = finding.get("title", "No Title")
+    description  = finding.get("description", "No Description")
+    region       = finding.get("region", "N/A")
+    account_id   = finding.get("accountId", "N/A")
+    finding_type = finding.get("type", "N/A")
 
-#     if severity_num >= 7:
-#         color = "#ff0000"
-#         sev = "🔴 HIGH"
-#     elif severity_num >= 4:
-#         color = "#ffa500"
-#         sev = "🟠 MEDIUM"
-#     else:
-#         color = "#007bff"
-#         sev = "🔵 LOW"
+    if severity_num >= 7:
+        color = "#ff0000"
+        sev = "🔴 HIGH"
+    elif severity_num >= 4:
+        color = "#ffa500"
+        sev = "🟠 MEDIUM"
+    else:
+        color = "#007bff"
+        sev = "🔵 LOW"
 
-#     payload = {
-#         "channel": SLACK_CHANNEL_ID,
-#         "text": f"🚨 {sev} – {title}\n{description}",
-#         "attachments": [
-#             {
-#                 "color": color,
-#                 "blocks": [
-#                     {"type": "header", "text": {"type": "plain_text", "text": f"🚨 GuardDuty Finding: {title}"}},
-#                     {"type": "section", "fields": [
-#                         {"type": "mrkdwn", "text": f"*Severity:*\n{sev}"},
-#                         {"type": "mrkdwn", "text": f"*Region:*\n{region}"}
-#                     ]},
-#                     {"type": "section", "text": {"type": "mrkdwn", "text": f"*Description:*\n{description}"}},
-#                     {"type": "divider"},
-#                     {"type": "context", "elements": [
-#                         {"type": "mrkdwn", "text": f"*Account:* `{account_id}`"},
-#                         {"type": "mrkdwn", "text": f"*Type:* `{finding_type}`"}
-#                     ]}
-#                 ]
-#             }
-#         ]
-#     }
+    payload = {
+        "text": f"🚨 {sev} – {title}",
+        "attachments": [{
+            "color": color,
+            "blocks": [
+                {"type": "header", "text": {"type": "plain_text", "text": f"🚨 GuardDuty Finding: {title}"}},
+                {"type": "section", "fields": [
+                    {"type": "mrkdwn", "text": f"*Severity:*\n{sev}"},
+                    {"type": "mrkdwn", "text": f"*Region:*\n{region}"}
+                ]},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*Description:*\n{description}"}},
+                {"type": "divider"},
+                {"type": "context", "elements": [
+                    {"type": "mrkdwn", "text": f"*Account:* `{account_id}`"},
+                    {"type": "mrkdwn", "text": f"*Type:* `{finding_type}`"}
+                ]}
+            ]
+        }]
+    }
 
-#     try:
-#         req = urllib.request.Request(
-#             url,
-#             data=json.dumps(payload).encode("utf-8"),
-#             headers={
-#                 "Content-Type": "application/json",
-#                 "Authorization": f"Bearer {SLACK_BOT_TOKEN}"
-#             }
-#         )
-#         with urllib.request.urlopen(req) as response:
-#             logger.info("Slack response: " + response.read().decode("utf-8"))
-#     except Exception as e:
-#         logger.error(f"SLACK FAILED: {e}")
+    try:
+        req = urllib.request.Request(
+            SLACK_WEBHOOK_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req) as response:
+            logger.info("Slack response: " + response.read().decode("utf-8"))
+    except Exception as e:
+        logger.error(f"SLACK FAILED: {e}")
 
 
 # ====================================================================
@@ -277,9 +269,9 @@ def lambda_handler(event, context):
     # if BOT_TOKEN and CHAT_ID:
     #     send_to_telegram(finding, CHAT_ID, MESSAGE_THREAD_ID)
 
-    # # --- Send Slack ---
-    # if SLACK_BOT_TOKEN:
-    #     send_to_slack(finding)
+    # --- Send Slack ---
+    if SLACK_WEBHOOK_URL:
+        send_to_slack(finding)
 
     # --- Send SES Email ---
     if SENDER_EMAIL and RECIPIENT_EMAIL:
