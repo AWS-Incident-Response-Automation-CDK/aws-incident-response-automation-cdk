@@ -1,3 +1,4 @@
+import json
 from aws_cdk import (
     Stack,
     aws_s3 as s3,
@@ -16,6 +17,7 @@ from aws_cdk import (
     aws_sns as sns,  
     aws_sns_subscriptions as sns_subscriptions,
     aws_kinesisfirehose as firehose,
+    aws_stepfunctions as sfn,
     Duration,
     RemovalPolicy,
 )
@@ -44,12 +46,18 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         self._create_guardduty_etl()
         self._create_sns_topic()
         self._create_alert_dispatch()
-        self._create_event_bridge_rules()
         self._create_security_group()
+        self._create_isolate_ec2_lambda()
+        self._create_parse_findings_lambda()
+        self._create_quarantine_iam_lambda()
+        self._create_incident_response_step_functions()
+        self._create_event_bridge_rules()
+        
         if vpc_ids:
             self._create_flow_log_iam_role()
             self._create_vpc_flow_logs(vpc_ids)
             self._create_dns_query_logging(vpc_ids)
+
 
     def _create_storage_infrastructure(self):
 
@@ -927,6 +935,10 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             targets.SnsTopic(self.ir_alert_topic)
         )
 
+        self.guardduty_findings_rule.add_target(
+            targets.SfnStateMachine(self.incident_response_step_functions)
+        )
+
     def _create_alert_dispatch(self):
         alert_emails= self.node.try_get_context("alert_email") or []
 
@@ -972,3 +984,124 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 vpc_id=vpc_ids[0], 
                 group_name="QuarantineSecurityGroup"
             )
+          
+    def _create_isolate_ec2_lambda(self):
+        self.isolate_ec2_function = _lambda.Function(
+            self, "IsolateEC2Lambda",
+            function_name="ir-isolate-ec2-lambda",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="isolate_ec2.lambda_handler",
+            code=_lambda.Code.from_asset("lambda/isolate_ec2"),
+            timeout=Duration.minutes(5),
+            environment={
+                "ISOLATION_SG_ID": self.quarantine_sg.ref if hasattr(self, 'quarantine_sg') else ""
+            }
+        )
+
+        self.isolate_ec2_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["ec2:ModifyInstanceAttribute", "ec2:DescribeInstances"],
+                resources=["*"]
+            )
+        )
+
+    def _create_parse_findings_lambda(self):
+        self.parse_findings_function = _lambda.Function(
+            self, "ParseFindingsLambda",
+            function_name="ir-parse-findings-lambda",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="parse_findings.lambda_handler",
+            code=_lambda.Code.from_asset("lambda/parse_findings"),
+            timeout=Duration.minutes(5)
+        )
+    
+    def _create_quarantine_iam_lambda(self):
+         
+        self.quarantine_policy = iam.ManagedPolicy(
+            self, "QuarantineIAMPolicy",
+            managed_policy_name="IrQuarantineIAMPolicy",
+            statements=[
+                iam.PolicyStatement(
+                    effect=iam.Effect.DENY,
+                    actions=["*"],
+                   resources=["*"]
+                )
+            ]
+        )
+
+        self.quarantine_iam_function = _lambda.Function(
+            self, "QuarantineIAMLambda",
+            function_name="ir-quarantine-iam-lambda",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="quarantine_iam.lambda_handler",
+            code=_lambda.Code.from_asset("lambda/quarantine_iam"),
+            timeout=Duration.minutes(5),
+            environment={
+                "QUARANTINE_POLICY_ARN": self.quarantine_policy.managed_policy_arn
+            }
+        )
+
+       
+        self.quarantine_iam_function.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "iam:AttachUserPolicy",
+                    "iam:ListAttachedUserPolicies",
+                ],
+                resources=[
+                    f"arn:aws:iam::{self.account}:user/*",
+                    self.quarantine_policy.managed_policy_arn
+                ]
+            )
+        )
+
+    def _create_incident_response_step_functions(self):
+        
+        self.step_functions_role = iam.Role(
+            self, "StepFunctionsRole",
+            assumed_by=iam.ServicePrincipal("states.amazonaws.com"),
+            inline_policies={
+                "LambdaInvokePolicy": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=["lambda:InvokeFunction"],
+                            resources=[
+                                self.parse_findings_function.function_arn,
+                                self.isolate_ec2_function.function_arn,
+                                self.quarantine_iam_function.function_arn
+                            ]
+                        )
+                    ]
+                ),
+                "EC2AutoScalingPolicy": iam.PolicyDocument(
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=[
+                                "ec2:ModifyInstanceAttribute",
+                                "ec2:CreateTags",
+                                "ec2:DescribeVolumes",
+                                "ec2:CreateSnapshot",
+                                "autoscaling:DescribeAutoScalingInstances",
+                                "autoscaling:UpdateAutoScalingGroup",
+                                "autoscaling:DetachInstances"
+                            ],
+                            resources=["*"]
+                        )
+                    ]
+                )
+            }
+        )
+        with open("stepfunctions/incident_response_stepfunctions.asl.json") as f:
+            definition = f.read()
+
+        definition = definition.replace("${IsolateEC2LambdaARN}", self.isolate_ec2_function.function_arn)
+        definition = definition.replace("${ParseFindingsLambdaARN}", self.parse_findings_function.function_arn)
+        definition = definition.replace("${QuarantineIAMLambdaARN}", self.quarantine_iam_function.function_arn)
+
+
+        self.incident_response_step_functions = sfn.StateMachine(
+            self, "IncidentResponseStepFunctions",
+            state_machine_name="IncidentResponseStepFunctions",
+            definition_body=sfn.DefinitionBody.from_string(definition),
+            role=self.step_functions_role
+        )
