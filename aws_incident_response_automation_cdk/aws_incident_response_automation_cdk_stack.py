@@ -468,7 +468,14 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 table_type="EXTERNAL_TABLE",
                 parameters={
                     "classification": "json",
-                    "compressionType": "gzip"
+                    "compressionType": "gzip",
+                    "projection.enabled": "true",
+                    "projection.date.type": "date",
+                    "projection.date.range": "2025-01-01,NOW",
+                    "projection.date.format": "yyyy-MM-dd",
+                    "projection.date.interval": "1",
+                    "projection.date.interval.unit": "DAYS",
+                    "storage.location.template": f"s3://{self.processed_guardduty_findings_bucket.bucket_name}/processed-guardduty/date=${{date}}/"
                 },
                 storage_descriptor=glue.CfnTable.StorageDescriptorProperty(
                     columns=[
@@ -503,7 +510,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                         glue.CfnTable.ColumnProperty(name="principal_id", type="string"),
                         glue.CfnTable.ColumnProperty(name="user_name", type="string"),
                         glue.CfnTable.ColumnProperty(name="s3_bucket_name", type="string"),
-                        glue.CfnTable.ColumnProperty(name="date", type="string"),
                         glue.CfnTable.ColumnProperty(name="service_raw", type="string"),
                         glue.CfnTable.ColumnProperty(name="resource_raw", type="string"),
                         glue.CfnTable.ColumnProperty(name="metadata_raw", type="string")
@@ -517,10 +523,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                     )
              ),
                 partition_keys=[
-                    glue.CfnTable.ColumnProperty(name="type", type="string"),
-                    glue.CfnTable.ColumnProperty(name="year", type="string"),
-                    glue.CfnTable.ColumnProperty(name="month", type="string"),
-                    glue.CfnTable.ColumnProperty(name="day", type="string")
+                    glue.CfnTable.ColumnProperty(name="date", type="string")
                 ]
             )   
         )

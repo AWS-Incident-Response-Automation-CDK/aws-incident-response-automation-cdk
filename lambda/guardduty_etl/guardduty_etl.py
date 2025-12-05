@@ -6,40 +6,11 @@ from datetime import datetime
 from urllib.parse import unquote_plus
 
 s3_client = boto3.client('s3')
-glue_client = boto3.client('glue') 
 
 DATABASE_NAME = os.environ.get("DATABASE_NAME", "security_logs")
 TABLE_NAME_GUARDDUTY = os.environ.get("TABLE_NAME_GUARDDUTY", "processed_guardduty")
 S3_LOCATION_GUARDDUTY = os.environ.get("S3_LOCATION_GUARDDUTY", "s3://vel-processed-guardduty/processed-guardduty/")
 DESTINATION_BUCKET = os.environ.get("DESTINATION_BUCKET", "vel-processed-guardduty")
-
-def add_partition_guardduty(year, month, day, type_partition):
-    
-    try:
-        glue_client.create_partition(
-            DatabaseName=DATABASE_NAME,
-            TableName=TABLE_NAME_GUARDDUTY,
-            PartitionInput={
-                'Values': [type_partition, year, month, day], 
-                'StorageDescriptor': {
-                    'Location': (
-                        f"{S3_LOCATION_GUARDDUTY}type={type_partition}/"
-                        f"year={year}/month={month}/day={day}/"
-                    ),
-                    'InputFormat': 'org.apache.hadoop.mapred.TextInputFormat',
-                    'OutputFormat': 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat',
-                    'SerdeInfo': {
-                        'SerializationLibrary': 'org.openx.data.jsonserde.JsonSerDe',
-                        'Parameters': {'serialization.format': '1'}
-                    }
-                }
-            }
-        )
-        print(f"Added GuardDuty partition for {type_partition}/{year}-{month}-{day}")
-    except glue_client.exceptions.AlreadyExistsException:
-        print(f"GuardDuty partition for {type_partition}/{year}-{month}-{day} already exists")
-    except Exception as e:
-        print(f"Error adding GuardDuty partition for {type_partition}/{year}-{month}-{day}: {str(e)}")
 
 def promote_network_details(finding_service):
     if not finding_service: return {}
@@ -140,11 +111,6 @@ def process_guardduty_log(bucket, key):
                 try: dt_obj = datetime.strptime(created_at_str, '%Y-%m-%dT%H:%M:%SZ')
                 except ValueError: pass
 
-        year = dt_obj.strftime('%Y')
-        month = dt_obj.strftime('%m')
-        day = dt_obj.strftime('%d')
-        type_partition = finding_type.replace(':', '_').replace('/', '_') 
-        
         processed_record = {
             'finding_id': finding.get('id'), 'finding_type': finding_type,
             'title': finding.get('title'), 'severity': finding.get('severity'),
@@ -152,8 +118,7 @@ def process_guardduty_log(bucket, key):
             'created_at': created_at_str,
             'event_last_seen': event_last_seen_str,
             **network_fields, **api_fields, **resource_fields,
-            'date': dt_obj.strftime('%Y-%m-%d'), 
-            'year': year, 'month': month, 'day': day, 'type_partition': type_partition,
+            'date': dt_obj.strftime('%Y-%m-%d'),
             'service_raw': json.dumps(finding_service), 'resource_raw': json.dumps(finding.get('resource', {})),
             'metadata_raw': json.dumps(finding.get('metadata', {})),
         }
@@ -166,28 +131,15 @@ def save_processed_data(processed_events, source_key):
         return
     
     first_event = processed_events[0]
-    
-    year = first_event.get('year', '0000')
-    month = first_event.get('month', '00')
-    day = first_event.get('day', '00')
-    type_partition = first_event.get('type_partition', 'other')
+    date_str = first_event.get('date', datetime.now().strftime('%Y-%m-%d'))
     
     original_filename = source_key.split('/')[-1].replace('.gz', '').replace('.json', '')
     
-    output_key = (
-        f"processed-guardduty/type={type_partition}/"
-        f"year={year}/month={month}/day={day}/"
-        f"{original_filename}_processed.jsonl.gz"
-    )
-    
-    KEYS_TO_REMOVE = ['year', 'month', 'day', 'type_partition']
+    output_key = f"processed-guardduty/date={date_str}/{original_filename}_processed.jsonl.gz"
     
     json_lines = ""
     for event in processed_events:
         event_to_dump = event.copy()
-        for key_to_remove in KEYS_TO_REMOVE:
-            event_to_dump.pop(key_to_remove, None) 
-            
         json_lines += json.dumps(event_to_dump) + "\n"
     compressed_data = gzip.compress(json_lines.encode('utf-8'))
 
@@ -201,8 +153,6 @@ def save_processed_data(processed_events, source_key):
     
     print(f"Saved processed data to: s3://{DESTINATION_BUCKET}/{output_key}")
     
-    add_partition_guardduty(year, month, day, type_partition)
-
 
 def lambda_handler(event, context):
 
@@ -214,7 +164,7 @@ def lambda_handler(event, context):
         
         try:
             processed_findings = process_guardduty_log(bucket, key)
-            save_processed_data(processed_findings, key) # This now calls add_partition_guardduty
+            save_processed_data(processed_findings, key) 
             print(f"Successfully processed {len(processed_findings)} findings from {key}")
             
         except Exception as e:
