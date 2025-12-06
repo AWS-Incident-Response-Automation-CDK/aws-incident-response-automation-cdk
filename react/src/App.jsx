@@ -3,7 +3,9 @@ import { useAuth } from "react-oidc-context";
 import './App.css'
 
 // --- CONFIGURATION ---
-const API_BASE_URL = 'https://staticdashboard.website/';
+const isProd = import.meta.env.PROD;
+//const DEV_API_BASE_URL = 'https://dk8d92wzanrwm.cloudfront.net';
+//const base = isProd ? '' : DEV_API_BASE_URL;
 const ITEMS_PER_PAGE = 10;
 
 // --- ICONS ---
@@ -51,15 +53,17 @@ const Icons = {
   )
 };
 
-function App() {
+function App({ config }) {
+  const base = config ? config.apiBaseUrl : '';
   const auth = useAuth();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const signOutRedirect = async () => {
     setIsLoggingOut(true);
-    const clientId = "77p7mci6tco3fuhfh3p9mbb79n";
+    if(!config) return;
+    const clientId = config.cognito.clientId;
     const logoutUri = window.location.origin;
-    const cognitoDomain = "https://ap-southeast-14boyagnkq.auth.ap-southeast-1.amazoncognito.com";
+    const cognitoDomain = `https://${config.cognito.domain}`;
     await auth.removeUser();
     window.location.href = `${cognitoDomain}/logout?client_id=${clientId}&logout_uri=${encodeURIComponent(logoutUri)}`;
   };
@@ -108,7 +112,7 @@ function App() {
     setError(null);
     setCurrentPage(1);
     try {
-      const url = `${API_BASE_URL}${endpoints[tab]}`;
+      const url = `${base}${endpoints[tab]}`;
       const items = await fetchAndParse(url);
       setData(items);
     } catch (err) {
@@ -122,10 +126,10 @@ function App() {
   const fetchOverallStats = async () => {
     try {
       const [gdData, ctData, vpcData, eniData] = await Promise.all([
-        fetchAndParse(`${API_BASE_URL}${endpoints.guardduty}`),
-        fetchAndParse(`${API_BASE_URL}${endpoints.cloudtrail}`),
-        fetchAndParse(`${API_BASE_URL}${endpoints.vpc}`),
-        fetchAndParse(`${API_BASE_URL}${endpoints.eni}`)
+        fetchAndParse(`${base}${endpoints.guardduty}`),
+        fetchAndParse(`${base}${endpoints.cloudtrail}`),
+        fetchAndParse(`${base}${endpoints.vpc}`),
+        fetchAndParse(`${base}${endpoints.eni}`)
       ]);
 
       setStats({
@@ -347,7 +351,7 @@ function App() {
     <div className="dashboard-container">
       <header className="dashboard-header">
         <div className="logo-section">
-          <h1><Icons.Shield size={28} color="#fff" /> Security Hub</h1>
+          <h1><Icons.Shield size={28} color="#fff" /> Dashboard Hub</h1>
         </div>
         <div className="user-controls" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <span style={{ color: 'white', marginRight: '10px' }}>Welcome, {auth.user?.profile.email}</span>

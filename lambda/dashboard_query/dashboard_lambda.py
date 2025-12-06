@@ -29,7 +29,9 @@ RESOURCE_MAP = {
 
 # --- CRITICAL FIX: ALWAYS USE THE RESULTS BUCKET ---
 # Do not try to write results into the evidence buckets.
-OUTPUT_BUCKET = f"athena-query-results-{self.account}-{self.region}"
+OUTPUT_BUCKET_NAME = os.environ.get("ATHENA_OUTPUT_BUCKET")
+REGION = os.environ.get("REGION")
+OUTPUT_BUCKET = f's3://{OUTPUT_BUCKET_NAME}/'
 
 def lambda_handler(event, context):
     print("Received event:", json.dumps(event)) 
@@ -53,8 +55,8 @@ def lambda_handler(event, context):
         
     elif config['table'] == 'processed_guardduty':
         query_string = f"""SELECT * FROM {table_name} 
-        WHERE cast(from_iso8601_timestamp(event_last_seen) as date) >= (current_date - interval '7' day)
-        ORDER BY event_last_seen DESC"""
+        where "date" >= cast((current_date - interval '3' day) as varchar)
+        limit 100"""
 
     elif config['table'] == 'vpc_logs':
         query_string = f"""SELECT * FROM {table_name}
