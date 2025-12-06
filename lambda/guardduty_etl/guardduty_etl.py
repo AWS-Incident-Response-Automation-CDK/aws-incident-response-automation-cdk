@@ -104,12 +104,23 @@ def process_guardduty_log(bucket, key):
         event_last_seen_str = finding_service.get('eventLastSeen')
 
         dt_obj = datetime.now()
-        if created_at_str:
+
+        if event_last_seen_str:
+            try:
+                dt_obj = datetime.strptime(event_last_seen_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+            except ValueError:
+                try: 
+                    dt_obj = datetime.strptime(event_last_seen_str, '%Y-%m-%dT%H:%M:%SZ')
+                except ValueError: 
+                    pass
+        elif created_at_str:
             try:
                 dt_obj = datetime.strptime(created_at_str, '%Y-%m-%dT%H:%M:%S.%fZ')
             except ValueError:
-                try: dt_obj = datetime.strptime(created_at_str, '%Y-%m-%dT%H:%M:%SZ')
-                except ValueError: pass
+                try: 
+                    dt_obj = datetime.strptime(created_at_str, '%Y-%m-%dT%H:%M:%SZ')
+                except ValueError: 
+                    pass
 
         processed_record = {
             'finding_id': finding.get('id'), 'finding_type': finding_type,
