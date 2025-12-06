@@ -56,3 +56,27 @@ command.
  * `cdk docs`        open CDK documentation
 
 Enjoy!
+
+# Step to build the dashboard
+
+**Check inside the `react` folder. If the `dist` folder already exists, you do not need to build. Otherwise, please follow the steps below.**
+
+## Prerequisites
+Ensure you have **Node.js** and **npm** installed. You can check the current version by running:
+```
+$ npm --version
+```
+If the command is not recognized, please download and install Node.js from [nodejs.org](https://nodejs.org/en)
+
+## Install dependencies
+Run the following command to install all necessary libraries:
+```
+$ npm install
+```
+
+## Build the Project
+After the installation is complete, run the build command:
+```
+$ npm run build
+```
+Upon completion, a dist folder will be generated containing index.html and the assets folder.
