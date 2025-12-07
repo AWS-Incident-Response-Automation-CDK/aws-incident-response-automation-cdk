@@ -1,230 +1,235 @@
 {
-  "Comment": "Guardduty Incident Response Automation",
-  "StartAt": "CheckFindingType",
-  "States": {
-    "CheckFindingType": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Comment": "Check if EC2",
-          "Variable": "$.detail.resource.resourceType",
-          "StringEquals": "Instance",
-          "Next": "ParseFindings"
-        },
-        {
-          "Comment": "Check if IAM",
-          "Variable": "$.detail.resource.resourceType",
-          "StringEquals": "AccessKey",
-          "Next": "Quarantine_IAM_User"
-        }
-      ],
-      "Default": "NoActionNeeded"
-    },
-    "ParseFindings": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "OutputPath": "$.Payload",
-      "Parameters": {
-        "Payload.$": "$",
-        "FunctionName": "${ParseFindingsLambdaARN}"
-      },
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException",
-            "Lambda.TooManyRequestsException"
-          ],
-          "IntervalSeconds": 1,
-          "MaxAttempts": 3,
-          "BackoffRate": 2,
-          "JitterStrategy": "FULL"
-        }
-      ],
-      "Next": "Isolate_EC2_Instance"
-    },
-    "Isolate_EC2_Instance": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${IsolateEC2LambdaARN}",
-        "Payload": {
-          "InstanceId.$": "$.InstanceIds[0]",
-          "Region.$": "$.Region"
-        }
-      },
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "Lambda.TooManyRequestsException",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2
-        }
-      ],
-      "Next": "CheckIsolationStatus",
-      "OutputPath": "$.Payload"
-    },
-    "CheckIsolationStatus": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.IsolationSG",
-          "IsNull": true,
-          "Next": "AlreadyIsolated"
-        }
-      ],
-      "Default": "EnableTerminationProtection"
-    },
-    "AlreadyIsolated": {
-      "Type": "Succeed"
-    },
-    "EnableTerminationProtection": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ec2:modifyInstanceAttribute",
-      "Parameters": {
-        "InstanceId.$": "$.InstanceId",
-        "DisableApiTermination": {
-          "Value": true
-        }
-      },
-      "Next": "CreateQuarantineTag",
-      "ResultPath": null
-    },
-    "CreateQuarantineTag": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ec2:createTags",
-      "Parameters": {
-        "Resources.$": "States.Array($.InstanceId)",
-        "Tags": [
-          {
-            "Key": "Quarantine",
-            "Value": "True"
-          },
-          {
-            "Key": "Security Group",
-            "Value.$": "$.IsolationSG"
-          }
-        ]
-      },
-      "Next": "DescribeInstanceASG",
-      "ResultPath": null
-    },
-    "DescribeInstanceASG": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:autoscaling:describeAutoScalingInstances",
-      "Parameters": {
-        "InstanceIds.$": "States.Array($.InstanceId)"
-      },
-      "ResultPath": "$.ASGInfo",
-      "Next": "CheckIfASGExists"
-    },
-    "CheckIfASGExists": {
-      "Type": "Choice",
-      "Choices": [
-        {
-          "Variable": "$.ASGInfo.AutoScalingInstances[0]",
-          "IsPresent": true,
-          "Next": "UpdateASGConfiguration"
-        }
-      ],
-      "Default": "DescribeVolumes"
-    },
-    "UpdateASGConfiguration": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:autoscaling:updateAutoScalingGroup",
-      "Parameters": {
-        "AutoScalingGroupName.$": "$.ASGInfo.AutoScalingInstances[0].AutoScalingGroupName",
-        "MinSize": 0
-      },
-      "ResultPath": null,
-      "Next": "DetachFromASG"
-    },
-    "DetachFromASG": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:autoscaling:detachInstances",
-      "Parameters": {
-        "AutoScalingGroupName.$": "$.ASGInfo.AutoScalingInstances[0].AutoScalingGroupName",
-        "InstanceIds.$": "States.Array($.InstanceId)",
-        "ShouldDecrementDesiredCapacity": true
-      },
-      "ResultPath": null,
-      "Next": "DescribeVolumes"
-    },
-    "DescribeVolumes": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:ec2:describeVolumes",
-      "Parameters": {
-        "Filters": [
-          {
-            "Name": "attachment.instance-id",
-            "Values.$": "States.Array($.InstanceId)"
-          }
-        ]
-      },
-      "ResultPath": "$.VolumeInfo",
-      "Next": "CreateSnapshots"
-    },
-    "CreateSnapshots": {
-      "Type": "Map",
-      "ItemsPath": "$.VolumeInfo.Volumes",
-      "MaxConcurrency": 5,
-      "Iterator": {
-        "StartAt": "CreateSnapshot",
-        "States": {
-          "CreateSnapshot": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::aws-sdk:ec2:createSnapshot",
-            "Parameters": {
-              "VolumeId.$": "$.VolumeId",
-              "Description.$": "States.Format('IR Snapshot for {} - {}', $.Attachments[0].InstanceId, $.VolumeId)",
-              "TagSpecifications": [
+    "Comment": "Guardduty Incident Response Automation",
+    "StartAt": "CheckFindingType",
+    "States": {
+        "CheckFindingType": {
+            "Type": "Choice",
+            "Choices": [
                 {
-                  "ResourceType": "snapshot",
-                  "Tags": [
-                    {
-                      "Key": "Quarantine",
-                      "Value": "True"
-                    }
-                  ]
+                    "Comment": "Check if EC2",
+                    "Variable": "$.detail.resource.resourceType",
+                    "StringEquals": "Instance",
+                    "Next": "ParseFindings"
+                },
+                {
+                    "Comment": "Check if IAM",
+                    "Variable": "$.detail.resource.resourceType",
+                    "StringEquals": "AccessKey",
+                    "Next": "Quarantine_IAM_User"
                 }
-              ]
+            ],
+            "Default": "NoActionNeeded"
+        },
+        "ParseFindings": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "OutputPath": "$.Payload",
+            "Parameters": {
+                "Payload.$": "$",
+                "FunctionName": "${ParseFindingsLambdaARN}"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException",
+                        "Lambda.TooManyRequestsException"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2,
+                    "JitterStrategy": "FULL"
+                }
+            ],
+            "Next": "Isolate_EC2_Instance"
+        },
+        "Isolate_EC2_Instance": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+                "FunctionName": "${IsolateEC2LambdaARN}",
+                "Payload": {
+                    "InstanceId.$": "$.InstanceIds[0]",
+                    "Region.$": "$.Region"
+                }
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Lambda.TooManyRequestsException",
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2
+                }
+            ],
+            "Next": "CheckIsolationStatus",
+            "OutputPath": "$.Payload"
+        },
+        "CheckIsolationStatus": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.IsolationSG",
+                    "IsNull": true,
+                    "Next": "AlreadyIsolated"
+                }
+            ],
+            "Default": "EnableTerminationProtection"
+        },
+        "AlreadyIsolated": {
+            "Type": "Succeed"
+        },
+        "EnableTerminationProtection": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:ec2:modifyInstanceAttribute",
+            "Parameters": {
+                "InstanceId.$": "$.InstanceId",
+                "DisableApiTermination": {
+                    "Value": true
+                }
+            },
+            "Next": "CreateQuarantineTag",
+            "ResultPath": null
+        },
+        "CreateQuarantineTag": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:ec2:createTags",
+            "Parameters": {
+                "Resources.$": "States.Array($.InstanceId)",
+                "Tags": [
+                    {
+                        "Key": "Quarantine",
+                        "Value": "True"
+                    },
+                    {
+                        "Key": "Security Group",
+                        "Value.$": "$.IsolationSG"
+                    }
+                ]
+            },
+            "Next": "DescribeInstanceASG",
+            "ResultPath": null
+        },
+        "DescribeInstanceASG": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:autoscaling:describeAutoScalingInstances",
+            "Parameters": {
+                "InstanceIds.$": "States.Array($.InstanceId)"
+            },
+            "ResultPath": "$.ASGInfo",
+            "Next": "CheckIfASGExists"
+        },
+        "CheckIfASGExists": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.ASGInfo.AutoScalingInstances[0]",
+                    "IsPresent": true,
+                    "Next": "UpdateASGConfiguration"
+                }
+            ],
+            "Default": "DescribeVolumes"
+        },
+        "UpdateASGConfiguration": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:autoscaling:updateAutoScalingGroup",
+            "Parameters": {
+                "AutoScalingGroupName.$": "$.ASGInfo.AutoScalingInstances[0].AutoScalingGroupName",
+                "MinSize": 0
+            },
+            "ResultPath": null,
+            "Next": "DetachFromASG"
+        },
+        "DetachFromASG": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:autoscaling:detachInstances",
+            "Parameters": {
+                "AutoScalingGroupName.$": "$.ASGInfo.AutoScalingInstances[0].AutoScalingGroupName",
+                "InstanceIds.$": "States.Array($.InstanceId)",
+                "ShouldDecrementDesiredCapacity": true
+            },
+            "ResultPath": null,
+            "Next": "DescribeVolumes"
+        },
+        "DescribeVolumes": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:ec2:describeVolumes",
+            "Parameters": {
+                "Filters": [
+                    {
+                        "Name": "attachment.instance-id",
+                        "Values.$": "States.Array($.InstanceId)"
+                    }
+                ]
+            },
+            "ResultPath": "$.VolumeInfo",
+            "Next": "CreateSnapshots"
+        },
+        "CreateSnapshots": {
+            "Type": "Map",
+            "ItemsPath": "$.VolumeInfo.Volumes",
+            "MaxConcurrency": 5,
+            "Iterator": {
+                "StartAt": "Wait before calling CreateSnapshot API",
+                "States": {
+                    "Wait before calling CreateSnapshot API": {
+                        "Type": "Wait",
+                        "Seconds": 5,
+                        "Next": "CreateSnapshot"
+                    },
+                    "CreateSnapshot": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::aws-sdk:ec2:createSnapshot",
+                        "Parameters": {
+                            "VolumeId.$": "$.VolumeId",
+                            "Description.$": "States.Format('IR Snapshot for {} - {}', $.Attachments[0].InstanceId, $.VolumeId)",
+                            "TagSpecifications": [
+                                {
+                                    "ResourceType": "snapshot",
+                                    "Tags": [
+                                        {
+                                            "Key": "Quarantine",
+                                            "Value": "True"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "End": true
+                    }
+                }
             },
             "End": true
-          }
+        },
+        "Quarantine_IAM_User": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+                "FunctionName": "${QuarantineIAMLambdaARN}",
+                "Payload.$": "$"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Lambda.TooManyRequestsException",
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2
+                }
+            ],
+            "End": true
+        },
+        "NoActionNeeded": {
+            "Type": "Succeed"
         }
-      },
-      "End": true
-    },
-    "Quarantine_IAM_User": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${QuarantineIAMLambdaARN}",
-        "Payload.$": "$"
-      },
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "Lambda.TooManyRequestsException",
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException"
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2
-        }
-      ],
-      "End": true
-    },
-    "NoActionNeeded": {
-      "Type": "Succeed"
     }
-  }
 }
