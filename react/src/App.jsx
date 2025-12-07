@@ -89,12 +89,11 @@ function App({ config }) {
     guardduty: ['finding_type', 'severity', 'region', 'account_id', 'created_at', 'event_last_seen'],
     cloudtrail: ['eventtime', 'eventname', 'usertype', 'username', 'awsregion', 'sourceipaddress'],
     vpc: ['account_id', 'vpc_id', 'region', 'query_name', 'srcids_instance', 'timestamp'],
-    eni: ['account_id', 'interface_id', 'srcaddr', 'dstaddr', 'srcport', 'dstport', 'protocol', 'action']
+    eni: ['account_id', 'interface_id', 'srcaddr', 'dstaddr', 'srcport', 'dstport', 'protocol', 'action', 'timestamp_str']
   };
 
   // Modal state
   const [selectedItem, setSelectedItem] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const endpoints = {

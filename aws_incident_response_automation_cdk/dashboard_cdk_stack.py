@@ -1,6 +1,5 @@
 import aws_cdk as cdk
 from aws_cdk import (
-    # Duration,
     CfnOutput,
     Stack,
     aws_s3 as s3,
@@ -21,6 +20,22 @@ class DashboardCdkStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        self._create_s3_bucket()
+        self._create_iam_role_lambda()
+        self._create_lambda()
+        self._create_api_gateway()
+        self._create_cloudfront_distribution()
+        self._create_cognito()
+        self._add_policy_to_s3()
+        self._create_config_file()
+        self._deploy_s3()
+
+        CfnOutput(
+            self, "CloudfrontURL",
+            value=f"https://{self.distribution.domain_name}",
+        )
+
+    def _create_s3_bucket(self):
         self.s3_static_dashboard = s3.Bucket(self, "StaticDashboardBucket", 
             bucket_name=f"static-dashboard-bucket-{self.account}-{self.region}",
             removal_policy=cdk.RemovalPolicy.DESTROY,
@@ -31,14 +46,14 @@ class DashboardCdkStack(Stack):
             auto_delete_objects=True
         )
 
-        lambda_role = iam.Role(
+    def _create_iam_role_lambda(self):
+        self.lambda_role = iam.Role(
             self, "DashboardLambdaRole",
             role_name="dashboard-query-role",
             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
             managed_policies=[
                 iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSLambdaBasicExecutionRole")
-            ]
-        )
+            ])
 
         lambda_custom_policy = iam.Policy(
             self, "LambdaQueryPolicy",
@@ -88,26 +103,26 @@ class DashboardCdkStack(Stack):
                         f"arn:aws:s3:::processed-cloudwatch-logs-{self.account}-{self.region}/*"
                     ]
                 )
-            ]
-        )
+            ])
 
-        lambda_role.attach_inline_policy(lambda_custom_policy)
+        self.lambda_role.attach_inline_policy(lambda_custom_policy)
 
+    def _create_lambda(self):
         self.dashboard_lambda = _lambda.Function(self, "DashboardLambdaFunction", 
             function_name="dashboard-query",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="dashboard_lambda.lambda_handler",
             code=_lambda.Code.from_asset("lambda/dashboard_query"),
-            role=lambda_role,
+            role=self.lambda_role,
             timeout=cdk.Duration.seconds(300),
             memory_size=256,
             environment={
                 "ATHENA_OUTPUT_BUCKET": f"athena-query-results-{self.account}-{self.region}",
                 "ACCOUNT_ID": self.account,
                 "REGION": self.region
-            }
-        )
-
+            })
+            
+    def _create_api_gateway(self):
         self.api = apigateway.RestApi(self, "DashboardApiGateway", 
             rest_api_name="dashboard-api",
             description="An API for dashboard use for lambda",
@@ -125,37 +140,26 @@ class DashboardCdkStack(Stack):
         )
 
         logs_root = self.api.root.add_resource("logs")
-
-        #logs/guardduty
-        logs_root.add_resource("guardduty").add_method(
-            "GET",
-            apigateway.LambdaIntegration(self.dashboard_lambda),
-        )
-
-        #logs/cloudtrail
-        logs_root.add_resource("cloudtrail").add_method(
-            "GET",
-            apigateway.LambdaIntegration(self.dashboard_lambda),
-        )
-
-        #logs/vpc
-        logs_root.add_resource("vpc").add_method(
-            "GET",
-            apigateway.LambdaIntegration(self.dashboard_lambda),
-        )
-
-        #logs/eni_logs
-        logs_root.add_resource("eni_logs").add_method(
-            "GET",
-            apigateway.LambdaIntegration(self.dashboard_lambda),
-        )
-
+        
         lambda_integration = apigateway.LambdaIntegration(self.dashboard_lambda)
 
+        #logs/guardduty
+        logs_root.add_resource("guardduty").add_method("GET", lambda_integration)
+
+        #logs/cloudtrail
+        logs_root.add_resource("cloudtrail").add_method("GET", lambda_integration)
+
+        #logs/vpc
+        logs_root.add_resource("vpc").add_method("GET", lambda_integration)
+
+        #logs/eni_logs
+        logs_root.add_resource("eni_logs").add_method("GET", lambda_integration)
+
+    def _create_cloudfront_distribution(self):
         origin_access_identity = cloudfront.OriginAccessIdentity(self, "OAI")
         self.s3_static_dashboard.grant_read(origin_access_identity)
 
-        distribution = cloudfront.Distribution(
+        self.distribution = cloudfront.Distribution(
             self, "DashboardDistribution",
             default_behavior=cloudfront.BehaviorOptions(
                 origin=origins.S3BucketOrigin.with_origin_access_control(self.s3_static_dashboard),
@@ -178,7 +182,6 @@ class DashboardCdkStack(Stack):
             price_class=cloudfront.PriceClass.PRICE_CLASS_100,
             minimum_protocol_version=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
             enable_ipv6=True,
-            #web_acl_id=web_acl.attr_arn,
             comment="Static Dashboard Distribution",
             error_responses=[
                 cloudfront.ErrorResponse(
@@ -191,10 +194,10 @@ class DashboardCdkStack(Stack):
                     response_http_status=200,
                     response_page_path="/index.html"
                 )
-            ]
-        )
+            ])
 
-        user_pool = cognito.UserPool(self, "DashboardUserPool",
+    def _create_cognito(self):
+        self.user_pool = cognito.UserPool(self, "DashboardUserPool",
             user_pool_name="dashboard-user-pool",
             self_sign_up_enabled=True,
             sign_in_aliases=cognito.SignInAliases(email=True, username=True),
@@ -212,7 +215,7 @@ class DashboardCdkStack(Stack):
             account_recovery=cognito.AccountRecovery.EMAIL_ONLY
         )
 
-        user_pool_client = user_pool.add_client("DashboardUserPoolClient",
+        self.user_pool_client = self.user_pool.add_client("DashboardUserPoolClient",
             user_pool_client_name="dashboard-user-pool-client",
             auth_flows=cognito.AuthFlow(
                 user_password=True,
@@ -224,12 +227,12 @@ class DashboardCdkStack(Stack):
                     authorization_code_grant=True
                 ),
                 scopes=[cognito.OAuthScope.OPENID, cognito.OAuthScope.PHONE, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
-                callback_urls=[f"https://{distribution.domain_name}"],
-                logout_urls=[f"https://{distribution.domain_name}"]
+                callback_urls=[f"https://{self.distribution.domain_name}"],
+                logout_urls=[f"https://{self.distribution.domain_name}"]
             )
         )
 
-        user_pool_domain = user_pool.add_domain("UserPoolDomain",
+        self.user_pool_domain = self.user_pool.add_domain("UserPoolDomain",
             cognito_domain=cognito.CognitoDomainOptions(
                 domain_prefix=f"dashboard-login-{self.account}"
             ),
@@ -238,34 +241,35 @@ class DashboardCdkStack(Stack):
 
         managed_login_branding = cognito.CfnManagedLoginBranding(
             self, "ManagedLoginBranding",
-            user_pool_id=user_pool.user_pool_id,
-            client_id=user_pool_client.user_pool_client_id,
+            user_pool_id=self.user_pool.user_pool_id,
+            client_id=self.user_pool_client.user_pool_client_id,
             use_cognito_provided_values=True
         )
 
+    def _add_policy_to_s3(self):
         self.s3_static_dashboard.add_to_resource_policy(
-            iam.PolicyStatement(
-                sid="AllowCloudFrontServicePrincipal",
-                effect=iam.Effect.ALLOW,
-                principals=[iam.ServicePrincipal("cloudfront.amazonaws.com")],
-                actions=["s3:GetObject"],
-                resources=[f"arn:aws:s3:::{self.s3_static_dashboard.bucket_name}/*"],
-                conditions={
-                    "StringEquals": {
-                        "AWS:SourceArn": f"arn:aws:cloudfront::{self.account}:distribution/{distribution.distribution_id}"
-                    }
+        iam.PolicyStatement(
+            sid="AllowCloudFrontServicePrincipal",
+            effect=iam.Effect.ALLOW,
+            principals=[iam.ServicePrincipal("cloudfront.amazonaws.com")],
+            actions=["s3:GetObject"],
+            resources=[f"arn:aws:s3:::{self.s3_static_dashboard.bucket_name}/*"],
+            conditions={
+                "StringEquals": {
+                    "AWS:SourceArn": f"arn:aws:cloudfront::{self.account}:distribution/{self.distribution.distribution_id}"
                 }
-            )
-        )
-
+            }
+        ))
+        
+    def _create_config_file(self):
         config_data = {
-            "apiBaseUrl": f"https://{distribution.domain_name}",
+            "apiBaseUrl": f"https://{self.distribution.domain_name}",
             "region": self.region,
             "cognito": {
-                "userPoolId": user_pool.user_pool_id,
-                "clientId": user_pool_client.user_pool_client_id,
-                "domain": f"{user_pool_domain.domain_name}.auth.{self.region}.amazoncognito.com",
-                "redirectUri": f"https://{distribution.domain_name}"
+                "userPoolId": self.user_pool.user_pool_id,
+                "clientId": self.user_pool_client.user_pool_client_id,
+                "domain": f"{self.user_pool_domain.domain_name}.auth.{self.region}.amazoncognito.com",
+                "redirectUri": f"https://{self.distribution.domain_name}"
             }
         }
 
@@ -289,18 +293,13 @@ class DashboardCdkStack(Stack):
                 )
             ])
         )
+        config_writer.node.add_dependency(self.s3_static_dashboard)
 
+    def _deploy_s3(self):
         s3deploy.BucketDeployment(self, "DeployStaticDashboard", 
             sources=[s3deploy.Source.asset("react/dist")],
             destination_bucket=self.s3_static_dashboard,
-            distribution=distribution,
+            distribution=self.distribution,
             distribution_paths=["/*"],
             prune=False
-        )
-
-        config_writer.node.add_dependency(self.s3_static_dashboard)
-
-        CfnOutput(
-            self, "CloudfrontURL",
-            value=f"https://{distribution.domain_name}",
         )

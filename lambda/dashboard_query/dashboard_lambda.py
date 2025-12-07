@@ -51,22 +51,22 @@ def lambda_handler(event, context):
     if config['table'] == 'processed_cloudtrail':
         query_string = f"""SELECT * FROM {table_name} 
         where "date" >= cast((current_date - interval '3' day) as varchar)
-        limit 100"""
+        order by eventtime desc"""
         
     elif config['table'] == 'processed_guardduty':
         query_string = f"""SELECT * FROM {table_name} 
         where "date" >= cast((current_date - interval '3' day) as varchar)
-        limit 100"""
+        order by date desc"""
 
     elif config['table'] == 'vpc_logs':
         query_string = f"""SELECT * FROM {table_name}
         where "date" >= cast((current_date - interval '3' day) as varchar)
-        limit 100"""
+        order by timestamp desc"""
 
     elif config['table'] == 'eni_flow_logs':
         query_string = f"""SELECT * FROM {table_name} 
         where "date" >= cast((current_date - interval '3' day) as varchar)
-        limit 100"""
+        order by timestamp_str desc"""
 
     print(f"Querying DB: {database_name}, Table: {table_name}, Output: {OUTPUT_BUCKET}")
     
