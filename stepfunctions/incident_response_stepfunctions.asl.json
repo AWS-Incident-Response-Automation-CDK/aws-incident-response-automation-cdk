@@ -151,7 +151,7 @@
             "Parameters": {
                 "AutoScalingGroupName.$": "$.ASGInfo.AutoScalingInstances[0].AutoScalingGroupName",
                 "InstanceIds.$": "States.Array($.InstanceId)",
-                "ShouldDecrementDesiredCapacity": true
+                "ShouldDecrementDesiredCapacity": false
             },
             "ResultPath": null,
             "Next": "DescribeVolumes"
