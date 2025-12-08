@@ -27,8 +27,7 @@ This document provides step-by-step instructions for deploying the Automated AWS
 
 ## AWS Configuration Setup
 
-Before deploying the CDK stack, you must configure your local environment to authenticate with your AWS account using the **AWS Command Line Interface (CLI)**. Download all the files and folders above
-or just clone the project before continue.
+Before deploying the CDK stack, you must configure your local environment to authenticate with your AWS account using the **AWS Command Line Interface (CLI)**. Download all the files and folders above, or just clone the project before continuing.
 
 1.  **Install the AWS CLI**.
 2.  **Obtain Credentials:** You need an **Access Key ID** and a **Secret Access Key** from an IAM user with deployment permissions.
@@ -155,5 +154,5 @@ The stack utilizes context variables. These variables are read from `cdk.context
 The deployment is complete when the CDK CLI reports success for the stack: `AwsIncidentResponseAutomationCdkStack` and `DashboardCdkStack` 
 
 **NOTE:**
-- After deploy complete, you should verify the email in SES.
-- You should create user in Cognito to be able to login to the Dashboard.
+- After the deployment is complete, you should verify the email in SES.
+- You should create a user in Cognito to be able to log in to the Dashboard.
