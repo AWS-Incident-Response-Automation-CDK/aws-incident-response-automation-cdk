@@ -1,4 +1,6 @@
-## Automated AWS Incident Response and Forensics System Overview
+## Automated AWS Incident Response and Forensics System 
+
+### Overview
 
 This project provides an automated security platform designed to minimize response time to security incidents within your AWS environment.
 
@@ -14,7 +16,7 @@ The system is built using **AWS CDK (Infrastructure-as-Code)** and works by orch
 * **Forensic Data Pipeline:** Collects, processes, and stores all evidence using custom **ETL AWS Lambda** functions and **Kinesis Data Firehose**.
 * **Analysis and Investigation:** Centralizes all processed logs in **AWS Glue** tables for rapid, cost-effective forensic analysis using **Amazon Athena**, accessible via an integrated web dashboard.
 
-## Architecture
+### Architecture
 
 _Automated AWS Incident Response and Forensics System Architecture_
 
@@ -22,7 +24,7 @@ _Automated AWS Incident Response and Forensics System Architecture_
 
 This document provides step-by-step instructions for deploying the Automated AWS Incident Response and Forensics CDK stack in your AWS Account.
 
-### AWS Configuration Setup
+## AWS Configuration Setup
 
 Before deploying the CDK stack, you must configure your local environment to authenticate with your AWS account using the **AWS Command Line Interface (CLI)**.
 
@@ -47,7 +49,7 @@ Before deploying the CDK stack, you must configure your local environment to aut
     ```
 
 ---
-### Prerequisites
+## Prerequisites
 
 Ensure the following tools and services are installed and configured on your system:
 
@@ -63,7 +65,7 @@ Ensure the following tools and services are installed and configured on your sys
     ```
 ---
 
-### Step 1: Set Up Python Environment
+## Set Up Python Environment
 
 The infrastructure definition is written in **Python**. A dedicated **virtual environment** is used to manage project dependencies.
 
@@ -86,7 +88,7 @@ The infrastructure definition is written in **Python**. A dedicated **virtual en
 
 ---
 
-### Step to build the dashboard
+## Step to build the dashboard
 
 **Check inside the `react` folder. If the `dist` folder already exists, you do not need to build. Otherwise, please follow the steps below.**
 
@@ -110,7 +112,7 @@ $ npm run build
 ```
 Upon completion, a dist folder will be generated containing index.html and the assets folder.
 
-### Configure Deployment Context
+## Configure Deployment Context
 
 The stack utilizes context variables. These variables are read from `cdk.context.json` or provided via command-line flags.
 
@@ -135,7 +137,7 @@ The stack utilizes context variables. These variables are read from `cdk.context
 }
 ```
 
-### Deploy the Stacks
+## Deploy the Stacks
 
 1.  **(Optional) Synthesize and Diff:** Review the proposed CloudFormation changes before deployment:
     ```bash
