@@ -1,5 +1,6 @@
 {
-    "vpc_ids": ["vpc-041b88ee022410e91"],
-    "alert_email": ["huynhankhuong0511@gmail.com", "huyletrannth@gmail.com"],
-    "sender_email": "aws.testgroup@gmail.com"
+    "vpc_ids": [],
+    "alert_email": [],
+    "sender_email": "",
+    "slack_webhook_url": ""
 }
