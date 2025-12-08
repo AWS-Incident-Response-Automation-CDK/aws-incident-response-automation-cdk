@@ -168,7 +168,7 @@ $ cd..
 
 The deployment is complete when the CDK CLI reports success for the stack: `AwsIncidentResponseAutomationCdkStack` and `DashboardCdkStack` 
 
-##IMPORTANT NOTE:
+## IMPORTANT NOTE:
 - After the deployment is complete, you should verify the email in SES.
 - Create a user in Cognito to be able to log in to the Dashboard.
 - Access the Security Group and remove the default outbound rule from the QuarantineSecurityGroup
