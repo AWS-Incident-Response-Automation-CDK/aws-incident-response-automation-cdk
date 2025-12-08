@@ -985,7 +985,8 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
                 self, "QuarantineSecurityGroup",
                 group_description="Security Group for Quarantined Instances",
                 vpc_id=vpc_ids[0], 
-                group_name="QuarantineSecurityGroup"
+                group_name="QuarantineSecurityGroup",
+                security_group_egress=[] 
             )
           
     def _create_isolate_ec2_lambda(self):

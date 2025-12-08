@@ -143,6 +143,11 @@
                 "MinSize": 0
             },
             "ResultPath": null,
+            "Next": "Wait for ASG"
+        },
+        "Wait for ASG": {
+            "Type": "Wait",
+            "Seconds": 10,
             "Next": "DetachFromASG"
         },
         "DetachFromASG": {
@@ -153,6 +158,16 @@
                 "InstanceIds.$": "States.Array($.InstanceId)",
                 "ShouldDecrementDesiredCapacity": false
             },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "AutoScaling.ValidationException"
+                    ],
+                    "IntervalSeconds": 15,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2
+                }
+            ],
             "ResultPath": null,
             "Next": "DescribeVolumes"
         },
@@ -173,13 +188,13 @@
         "CreateSnapshots": {
             "Type": "Map",
             "ItemsPath": "$.VolumeInfo.Volumes",
-            "MaxConcurrency": 5,
+            "MaxConcurrency": 1,
             "Iterator": {
                 "StartAt": "Wait before calling CreateSnapshot API",
                 "States": {
                     "Wait before calling CreateSnapshot API": {
                         "Type": "Wait",
-                        "Seconds": 5,
+                        "Seconds": 15,
                         "Next": "CreateSnapshot"
                     },
                     "CreateSnapshot": {
@@ -200,6 +215,16 @@
                                 }
                             ]
                         },
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "Ec2.RequestLimitExceeded"
+                                ],
+                                "IntervalSeconds": 60,
+                                "MaxAttempts": 3,
+                                "BackoffRate": 2
+                            }
+                        ],
                         "End": true
                     }
                 }
