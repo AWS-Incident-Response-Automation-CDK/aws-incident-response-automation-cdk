@@ -93,7 +93,7 @@ If you are on cmd use this command to move to `react` folder:
 ```
 $ cd react
 ```
-And use this command to list all content in `reat`:
+And use this command to list all content in `react`:
 ```
 $ ls
 ```
