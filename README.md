@@ -1,63 +1,73 @@
 
-# Welcome to your CDK Python project!
+## AWS Incident Response Automation Stack Deployment Guide
 
-This is a blank project for CDK development with Python.
+This document provides step-by-step instructions for deploying the AWS Incident Response Automation CDK stack in your AWS Account.
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+### AWS Configuration Setup
 
-This project is set up like a standard Python project.  The initialization
-process also creates a virtualenv within this project, stored under the `.venv`
-directory.  To create the virtualenv it assumes that there is a `python3`
-(or `python` for Windows) executable in your path with access to the `venv`
-package. If for any reason the automatic creation of the virtualenv fails,
-you can create the virtualenv manually.
+Before deploying the CDK stack, you must configure your local environment to authenticate with your AWS account using the **AWS Command Line Interface (CLI)**.
 
-To manually create a virtualenv on MacOS and Linux:
+1.  **Install the AWS CLI**.
+2.  **Obtain Credentials:** You need an **Access Key ID** and a **Secret Access Key** from an IAM user with deployment permissions.
+3.  **Run the Configuration Command:** Open your terminal and execute `aws configure`.
+    ```bash
+    $ aws configure
+    ```
+    When prompted, enter your credentials and desired settings. The **Default region name** should match the region where you plan to deploy the stack (e.g., `ap-southeast-1`):
 
-```
-$ python -m venv .venv
-```
+    | Prompt | Example Value |
+    | :--- | :--- |
+    | `AWS Access Key ID` | `AKIA...` |
+    | `AWS Secret Access Key` | `wJalr...` |
+    | `Default region name` | `ap-southeast-1` |
+    | `Default output format` | `json` |
 
-After the init process completes and the virtualenv is created, you can use the following
-step to activate your virtualenv.
+4.  **Verify Configuration:** Test your setup by fetching your user identity. A successful output confirms you are authenticated.
+    ```bash
+    $ aws sts get-caller-identity
+    ```
 
-```
-$ source .venv/bin/activate
-```
+---
+### Prerequisites
 
-If you are a Windows platform, you would activate the virtualenv like this:
+Ensure the following tools and services are installed and configured on your system:
 
-```
-% .venv\Scripts\activate.bat
-```
+1.  **Python 3.8+ and pip:** Required for executing the CDK application and building Lambda function assets.
+2.  **Node.js and npm:** Required for running the AWS CDK CLI and building the React dashboard.
+3.  **AWS CDK Toolkit:** Install the CDK CLI globally:
+    ```bash
+    $ npm install -g aws-cdk
+    ```
+5.  **CDK Bootstrapping:** If you have not used the **AWS CDK** in your target AWS account and region previously, run the bootstrap command once to provision necessary resources (e.g., S3 deployment bucket).
+    ```bash
+    $ cdk bootstrap
+    ```
+---
 
-Once the virtualenv is activated, you can install the required dependencies.
+### Step 1: Set Up Python Environment
 
-```
-$ pip install -r requirements.txt
-```
+The infrastructure definition is written in **Python**. A dedicated **virtual environment** is used to manage project dependencies.
 
-At this point you can now synthesize the CloudFormation template for this code.
+1.  **Create the Virtual Environment** (Skip if the `.venv` directory exists):
+    ```bash
+    $ python -m venv .venv
+    ```
+2.  **Activate the Virtual Environment**:
 
-```
-$ cdk synth
-```
+    | Operating System | Command |
+    | :--- | :--- |
+    | **macOS / Linux** | `source .venv/bin/activate` |
+    | **Windows (Command Prompt)** | `.venv\Scripts\activate.bat` |
+    | **Windows (PowerShell)** | `.venv\Scripts\Activate.ps1` |
 
-To add additional dependencies, for example other CDK libraries, just add
-them to your `setup.py` file and rerun the `pip install -r requirements.txt`
-command.
+3.  **Install Python Dependencies**:
+    ```bash
+    $ pip install -r requirements.txt
+    ```
 
-## Useful commands
+---
 
- * `cdk ls`          list all stacks in the app
- * `cdk synth`       emits the synthesized CloudFormation template
- * `cdk deploy`      deploy this stack to your default AWS account/region
- * `cdk diff`        compare deployed stack with current state
- * `cdk docs`        open CDK documentation
-
-Enjoy!
-
-# Step to build the dashboard
+### Step to build the dashboard
 
 **Check inside the `react` folder. If the `dist` folder already exists, you do not need to build. Otherwise, please follow the steps below.**
 
@@ -80,3 +90,43 @@ After the installation is complete, run the build command:
 $ npm run build
 ```
 Upon completion, a dist folder will be generated containing index.html and the assets folder.
+
+### Configure Deployment Context
+
+The stack utilizes context variables. These variables are read from `cdk.context.json` or provided via command-line flags.
+
+| Variable Name | Description | Required if functionality is desired | Default Value (in `cdk.context.json`) |
+| :--- | :--- | :--- | :--- |
+| `vpc_ids` | A list of VPC IDs for Flow Logs and DNS Query Logging. | Yes | `[]` |
+| `alert_email` | A list of email addresses for alert notifications (requires SES). | Yes | `[]` |
+| `sender_email` | The verified SES sender email address. | Yes (if `alert_email` is set) | `""` |
+| `slack_webhook_url` | The Slack webhook URL for sending alerts. | No | `""` |
+
+**Example**
+```json
+{
+    "vpc_ids": [
+        "vpc-a1b2c3d4e5f6g7h8i"
+    ],
+    "alert_email": [
+        "admin@example.com"
+    ],
+    "sender_email": "alerts@your-domain.com",
+    "slack_webhook_url": ""
+}
+```
+
+### Deploy the Stacks
+
+1.  **(Optional) Synthesize and Diff:** Review the proposed CloudFormation changes before deployment:
+    ```bash
+    $ cdk synth --all
+    $ cdk diff --all
+    ```
+
+2.  **Execute Deployment:** Run the deployment command and approve any requested **IAM security changes** when prompted.
+    ```bash
+    $ cdk deploy --all
+    ```
+
+The deployment is complete when the CDK CLI reports success for the stack: `AwsIncidentResponseAutomationCdkStack` and `DashboardCdkStack` 
