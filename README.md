@@ -27,7 +27,9 @@ This document provides step-by-step instructions for deploying the Automated AWS
 
 ## AWS Configuration Setup
 
-Before deploying the CDK stack, you must configure your local environment to authenticate with your AWS account using the **AWS Command Line Interface (CLI)**. Download all the files and folders above, or just clone the project before continuing.
+### IMPORTANT: Download all the files and folders above, or just clone the project before continuing.
+
+Before deploying the CDK stack, you must configure your local environment to authenticate with your AWS account using the **AWS Command Line Interface (CLI)**.
 
 1.  **Install the AWS CLI**.
 2.  **Obtain Credentials:** You need an **Access Key ID** and a **Secret Access Key** from an IAM user with deployment permissions.
