@@ -68,7 +68,7 @@ Ensure the following tools and services are installed and configured on your sys
 
 The infrastructure definition is written in **Python**. A dedicated **virtual environment** is used to manage project dependencies.
 
-1.  **Create the Virtual Environment** (Skip if the `.venv` directory exists):
+1.  **Create the Virtual Environment**:
     ```bash
     $ python -m venv .venv
     ```
