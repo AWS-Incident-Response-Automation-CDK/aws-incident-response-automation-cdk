@@ -232,6 +232,21 @@
             "End": true
         },
         "Quarantine_IAM_User": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.detail.resource.accessKeyDetails.userType",
+                    "StringEquals": "Root",
+                    "Next": "RootUserDetected"
+                }
+            ],
+            "Default": "ExecuteIAMQuarantine"
+        },
+        "RootUserDetected": {
+            "Type": "Succeed",
+            "Comment": "Cannot quarantine root user"
+        },
+        "ExecuteIAMQuarantine": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
