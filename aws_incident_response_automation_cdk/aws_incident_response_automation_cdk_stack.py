@@ -68,7 +68,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
