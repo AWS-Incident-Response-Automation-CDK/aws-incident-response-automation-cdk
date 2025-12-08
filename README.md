@@ -62,10 +62,6 @@ Ensure the following tools and services are installed and configured on your sys
     ```bash
     $ npm install -g aws-cdk
     ```
-5.  **CDK Bootstrapping:** If you have not used the **AWS CDK** in your target AWS account and region previously, run the bootstrap command once to provision necessary resources (e.g., S3 deployment bucket).
-    ```bash
-    $ cdk bootstrap
-    ```
 ---
 
 ## Set Up Python Environment
@@ -88,12 +84,19 @@ The infrastructure definition is written in **Python**. A dedicated **virtual en
     ```bash
     $ pip install -r requirements.txt
     ```
-
 ---
 
 ## Step to build the dashboard
 
-**Check inside the `react` folder. If the `dist` folder already exists, you do not need to build. Otherwise, please follow the steps below.**
+**In the project folder location, check inside the `react` folder. If the `dist` folder already exists, you do not need to build. Otherwise, please follow the steps below.**
+If you are on cmd use this command to move to `react` folder:
+```
+$ cd react
+```
+And use this command to list all content in `reat`:
+```
+$ ls
+```
 
 ## Prerequisites
 Ensure you have **Node.js** and **npm** installed. You can check the current version by running:
@@ -142,13 +145,18 @@ The stack utilizes context variables. These variables are read from `cdk.context
 
 ## Deploy the Stacks
 
-1.  **(Optional) Synthesize and Diff:** Review the proposed CloudFormation changes before deployment:
+1.  **CDK Bootstrapping:** If you have not used the **AWS CDK** in your target AWS account and region previously, run the bootstrap command once to provision necessary resources (e.g., S3 deployment bucket).
+    ```bash
+    $ cdk bootstrap
+    ```
+
+2.  **(Optional) Synthesize and Diff:** Review the proposed CloudFormation changes before deployment:
     ```bash
     $ cdk synth --all
     $ cdk diff --all
     ```
 
-2.  **Execute Deployment:** Run the deployment command and approve any requested **IAM security changes** when prompted.
+3.  **Execute Deployment:** Run the deployment command and approve any requested **IAM security changes** when prompted.
     ```bash
     $ cdk deploy --all
     ```
