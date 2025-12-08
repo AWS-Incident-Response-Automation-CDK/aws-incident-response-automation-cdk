@@ -17,6 +17,7 @@ The system is built using **AWS CDK (Infrastructure-as-Code)** and works by orch
 * **Analysis and Investigation:** Centralizes all processed logs in **AWS Glue** tables for rapid, cost-effective forensic analysis using **Amazon Athena**, accessible via an integrated web dashboard.
 
 ### Architecture
+<img width="1228" height="742" alt="AWSWorkshopArchitecture-Final" src="https://github.com/user-attachments/assets/7e9ac78f-d204-4255-b2eb-0a22f1d70586" />
 
 _Automated AWS Incident Response and Forensics System Architecture_
 
