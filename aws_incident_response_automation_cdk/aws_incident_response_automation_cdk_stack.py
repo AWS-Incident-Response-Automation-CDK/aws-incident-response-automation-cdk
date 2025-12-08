@@ -68,7 +68,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -78,7 +77,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -88,7 +86,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -98,7 +95,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -108,7 +104,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -142,6 +137,17 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
 
         bucket_arn = self.log_list_bucket.bucket_arn
         bucket_objects_arn = self.log_list_bucket.arn_for_objects("*")
+
+        # self.log_list_bucket.add_to_resource_policy(
+        #     iam.PolicyStatement(
+        #         sid="DenyNonHTTPSAccess",
+        #         effect=iam.Effect.DENY,
+        #         principals=[iam.AnyPrincipal()], 
+        #         actions=["s3:*"],
+        #         resources=[bucket_arn, bucket_objects_arn],
+        #         conditions={"Bool": {"aws:SecureTransport": "false"}}
+        #     )
+        # )
 
         self.log_list_bucket.add_to_resource_policy(
             iam.PolicyStatement(
@@ -265,6 +271,15 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         )
         
     def _create_cloudtrail(self):
+      
+        # self.cloudtrail = cloudtrail.Trail( 
+        #     self, "CloudTrail",
+        #     trail_name=f"incident-response-cloudtrail-{self.account}-{self.region}",
+        #     is_multi_region_trail=True,
+        #     bucket=self.log_list_bucket,            
+        #     enable_file_validation=True,
+        #     management_events=cloudtrail.ReadWriteType.WRITE_ONLY,
+        # )
         
         self.cloudtrail= cloudtrail.CfnTrail(
             self, "CloudTrail",
@@ -662,7 +677,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             code=_lambda.Code.from_asset("lambda/cloudtrail_etl"),
             timeout=Duration.minutes(5),
             environment={
-                "FIREHOSE_STREAM_NAME": self.cloudtrail_firehose_stream.ref,
+                "FIREHOSE_STREAM_NAME": self.cloudtrail_firehose_stream.delivery_stream_name,
             }
         )
         self.cloudtrail_etl_function.add_to_role_policy(
@@ -783,13 +798,13 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
     def _create_cloudwatch_etl(self):
         self.cloudwatch_etl_function = _lambda.Function(
             self, "CloudWatchETLLambda",
-            function_name=f"incident-response-cloudwatch-etl",
+            function_name=f"cloudwatch-etl-lambda",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="cloudwatch_etl.lambda_handler",
             code=_lambda.Code.from_asset("lambda/cloudwatch_etl"),
             timeout=Duration.minutes(5),
             environment={
-                "FIREHOSE_STREAM_NAME": self.vpc_dns_firehose_stream.ref,
+                "FIREHOSE_STREAM_NAME": self.vpc_dns_firehose_stream.delivery_stream_name,
             }
         )
 
@@ -820,13 +835,13 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
     def _create_cloudwatch_eni_etl(self):
         self.cloudwatch_eni_etl_function = _lambda.Function(
             self, "CloudWatchENIETLLambda",
-            function_name=f"incident-response-cloudwatch-eni-etl",
+            function_name=f"cloudwatch-eni-etl-lambda",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="cloudwatch_eni_etl.lambda_handler",
             code=_lambda.Code.from_asset("lambda/cloudwatch_eni_etl"),
             timeout=Duration.minutes(5),
             environment={
-                "FIREHOSE_STREAM_NAME": self.vpc_flow_firehose_stream.ref,
+                "FIREHOSE_STREAM_NAME": self.vpc_flow_firehose_stream.delivery_stream_name,
             }
         )
 
