@@ -145,6 +145,11 @@ The stack utilizes context variables. These variables are read from `cdk.context
 
 ## Deploy the Stacks
 
+**Before processing further, enter this command:**
+```
+$ cd..
+```
+
 1.  **CDK Bootstrapping:** If you have not used the **AWS CDK** in your target AWS account and region previously, run the bootstrap command once to provision necessary resources (e.g., S3 deployment bucket).
     ```bash
     $ cdk bootstrap
