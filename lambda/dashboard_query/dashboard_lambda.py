@@ -5,13 +5,10 @@ import json
 
 athena = boto3.client('athena')
 
-# --- CONFIGURATION MAPPING ---
-# This maps the "URL Path" (from API Gateway) to your "Athena Database" & "Table"
-# You might need to adjust the 'table' names if they differ from your DB name.
 RESOURCE_MAP = {
     '/logs/cloudtrail': { 
         'db': 'security_logs', 
-        'table': 'processed_cloudtrail'     # REPLACE with actual table name
+        'table': 'processed_cloudtrail'
     },
     '/logs/guardduty': { 
         'db': 'security_logs', 
@@ -27,8 +24,6 @@ RESOURCE_MAP = {
     }
 }
 
-# --- CRITICAL FIX: ALWAYS USE THE RESULTS BUCKET ---
-# Do not try to write results into the evidence buckets.
 OUTPUT_BUCKET_NAME = os.environ.get("ATHENA_OUTPUT_BUCKET")
 REGION = os.environ.get("REGION")
 OUTPUT_BUCKET = f's3://{OUTPUT_BUCKET_NAME}/'
@@ -47,7 +42,6 @@ def lambda_handler(event, context):
 
     query_params = event.get('queryStringParameters', {}) or {}
     
-    # Select specific columns based on table type
     if config['table'] == 'processed_cloudtrail':
         query_string = f"""SELECT * FROM {table_name} 
         where "date" >= cast((current_date - interval '3' day) as varchar)
@@ -71,8 +65,6 @@ def lambda_handler(event, context):
     print(f"Querying DB: {database_name}, Table: {table_name}, Output: {OUTPUT_BUCKET}")
     
     try:
-        # Start Query
-        # We explicitly use the 'primary' workgroup. If you use a custom one, add WorkGroup='name' below.
         response = athena.start_query_execution(
             QueryString=query_string,
             QueryExecutionContext={'Database': database_name},
@@ -80,7 +72,6 @@ def lambda_handler(event, context):
         )
         query_execution_id = response['QueryExecutionId']
         
-        # Wait for results (Simple Polling)
         status = 'RUNNING'
         while status in ['RUNNING', 'QUEUED']:
             response = athena.get_query_execution(QueryExecutionId=query_execution_id)
