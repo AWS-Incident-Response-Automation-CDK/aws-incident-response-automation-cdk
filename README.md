@@ -145,7 +145,7 @@ The stack utilizes context variables. These variables are read from `cdk.context
 
 ## Deploy the Stacks
 
-**Before processing further, enter this command:**
+**Before processing further, if inside the **/react** folder, enter this command to go back to the main folder:**
 ```
 $ cd..
 ```
@@ -170,4 +170,4 @@ The deployment is complete when the CDK CLI reports success for the stack: `AwsI
 
 **NOTE:**
 - After the deployment is complete, you should verify the email in SES.
-- You should create a user in Cognito to be able to log in to the Dashboard.
+- Create a user in Cognito to be able to log in to the Dashboard.
