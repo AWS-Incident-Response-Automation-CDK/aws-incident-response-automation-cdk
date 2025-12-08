@@ -5,6 +5,7 @@ from aws_cdk import (
     aws_logs as logs,
     aws_kms as kms,
     aws_iam as iam,
+    aws_guardduty as guardduty,
     RemovalPolicy,
 )
 from constructs import Construct
@@ -17,6 +18,7 @@ class FoundationStack(Stack):
         self._create_storage_infrastructure()
         self._create_log_group()
         self._create_kms_key()
+        self._enable_guardduty()
         self._create_outputs()
 
     def _create_storage_infrastructure(self):
@@ -86,7 +88,42 @@ class FoundationStack(Stack):
                 }
             )
         )
+    def _enable_guardduty(self):
+        self.guardduty_detector = guardduty.CfnDetector(
+            self, "GuardDutyDetector",
+            enable=True,
+            finding_publishing_frequency="FIFTEEN_MINUTES"
+        )
+        self.guardduty_publishing_destination = guardduty.CfnPublishingDestination(
+            self, "GuardDutyS3Publishing",
+            detector_id=self.guardduty_detector.ref,
+            destination_type="S3",
+            destination_properties=guardduty.CfnPublishingDestination.CFNDestinationPropertiesProperty(
+                destination_arn=f"arn:aws:s3:::{self.log_list_bucket.bucket_name}",
+                kms_key_arn=self.kms_key.key_arn
+            )
+        )
+        self.log_list_bucket.add_to_resource_policy(
+        iam.PolicyStatement(
+            sid="AllowGuardDutyPutObject",
+            effect=iam.Effect.ALLOW,
+            principals=[iam.ServicePrincipal("guardduty.amazonaws.com")],
+            actions=["s3:PutObject"],
+            resources=[f"{self.log_list_bucket.bucket_arn}/*"],
+            conditions={"StringEquals": {"aws:SourceAccount": self.account}}
+        )
+    )
 
+        self.log_list_bucket.add_to_resource_policy(
+        iam.PolicyStatement(
+            sid="AllowGuardDutyGetBucketLocation",
+            effect=iam.Effect.ALLOW,
+            principals=[iam.ServicePrincipal("guardduty.amazonaws.com")],
+            actions=["s3:GetBucketLocation"],
+            resources=[self.log_list_bucket.bucket_arn],
+            conditions={"StringEquals": {"aws:SourceAccount": self.account}}
+        )
+    )
     def _create_log_group(self):
         self.ir_log_group = logs.LogGroup(
             self, "IRLogGroup",
@@ -94,6 +131,7 @@ class FoundationStack(Stack):
             retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=RemovalPolicy.DESTROY
         )
+
 
     def _create_outputs(self):
         CfnOutput(self, "LogListBucketName", value=self.log_list_bucket.bucket_name)

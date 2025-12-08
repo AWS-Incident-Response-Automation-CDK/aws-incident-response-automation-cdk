@@ -33,7 +33,6 @@ class SecurityNetworkingStack(Stack):
         
         vpc_ids = self.node.try_get_context("vpc_ids") or []
 
-        self._enable_guardduty()
         self._create_cloudtrail()
         self._add_bucket_policies()
         self._create_security_group()
@@ -43,22 +42,6 @@ class SecurityNetworkingStack(Stack):
             self._create_vpc_flow_logs(vpc_ids)
             self._create_dns_query_logging(vpc_ids)
 
-    def _enable_guardduty(self):
-        self.guardduty_detector = guardduty.CfnDetector(
-            self, "GuardDutyDetector",
-            enable=True,
-            finding_publishing_frequency="FIFTEEN_MINUTES"
-        )
-
-        self.guardduty_publishing_destination = guardduty.CfnPublishingDestination(
-            self, "GuardDutyS3Publishing",
-            detector_id=self.guardduty_detector.ref,
-            destination_type="S3",
-            destination_properties=guardduty.CfnPublishingDestination.CFNDestinationPropertiesProperty(
-                destination_arn=f"arn:aws:s3:::{self.log_list_bucket_name}",
-                kms_key_arn=self.kms_key_arn
-            )
-        )
 
     def _create_cloudtrail(self):
         self.cloudtrail = cloudtrail.CfnTrail(
@@ -106,37 +89,7 @@ class SecurityNetworkingStack(Stack):
         )
 
     def _add_bucket_policies(self):
-        GD_DETECTOR_ID = self.guardduty_detector.ref
-        GD_ARN = f"arn:aws:guardduty:{self.region}:{self.account}:detector/{GD_DETECTOR_ID}"
-
-        self.log_list_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                sid="AllowGuardDutyPutObject",
-                effect=iam.Effect.ALLOW,
-                principals=[iam.ServicePrincipal("guardduty.amazonaws.com")],
-                actions=["s3:PutObject"],
-                resources=[f"arn:aws:s3:::{self.log_list_bucket_name}/*"],
-                conditions={
-                    "StringEquals": {"aws:SourceAccount": f"{self.account}"},
-                    "ArnLike": {"aws:SourceArn": GD_ARN}
-                }
-            )
-        )
-
-        self.log_list_bucket.add_to_resource_policy(
-            iam.PolicyStatement(
-                sid="AllowGuardDutyGetBucketLocation",
-                effect=iam.Effect.ALLOW,
-                principals=[iam.ServicePrincipal("guardduty.amazonaws.com")],
-                actions=["s3:GetBucketLocation"],
-                resources=[f"arn:aws:s3:::{self.log_list_bucket_name}"],
-                conditions={
-                    "StringEquals": {"aws:SourceAccount": self.account},
-                    "ArnLike": {"aws:SourceArn": GD_ARN}
-                }
-            )
-        )
-
+        
         # CloudWatch Logs policies
         CW_LOGS_PRINCIPAL = iam.ServicePrincipal(f"logs.{self.region}.amazonaws.com")
         CW_LOGS_ARN = f"arn:aws:logs:{self.region}:{self.account}:log-group:*"
