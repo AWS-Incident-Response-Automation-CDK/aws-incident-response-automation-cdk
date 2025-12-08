@@ -7,11 +7,12 @@ from aws_incident_response_automation_cdk.aws_incident_response_automation_cdk_s
 from aws_incident_response_automation_cdk.dashboard_cdk_stack import DashboardCdkStack
 
 app = cdk.App()
+env= cdk.Environment(account=os.getenv('CDK_DEFAULT_ACCOUNT'), region=os.getenv('CDK_DEFAULT_REGION'))
 AwsIncidentResponseAutomationCdkStack(app, "AwsIncidentResponseAutomationCdkStack",
-    env=cdk.Environment(account='831981618496', region='ap-southeast-1'),
+    env=env,
     )
 
 DashboardCdkStack(app, "DashboardCdkStack",
-    env=cdk.Environment(account='831981618496', region='ap-southeast-1'),
+    env=env,
     )
 app.synth()
