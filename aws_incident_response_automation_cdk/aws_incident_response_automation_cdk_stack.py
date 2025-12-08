@@ -68,6 +68,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
+            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -77,6 +78,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
+            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -86,6 +88,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
+            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -95,6 +98,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
+            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -104,6 +108,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
+            enforce_ssl=True,
             removal_policy=RemovalPolicy.DESTROY
         )
 
@@ -137,17 +142,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
 
         bucket_arn = self.log_list_bucket.bucket_arn
         bucket_objects_arn = self.log_list_bucket.arn_for_objects("*")
-
-        # self.log_list_bucket.add_to_resource_policy(
-        #     iam.PolicyStatement(
-        #         sid="DenyNonHTTPSAccess",
-        #         effect=iam.Effect.DENY,
-        #         principals=[iam.AnyPrincipal()], 
-        #         actions=["s3:*"],
-        #         resources=[bucket_arn, bucket_objects_arn],
-        #         conditions={"Bool": {"aws:SecureTransport": "false"}}
-        #     )
-        # )
 
         self.log_list_bucket.add_to_resource_policy(
             iam.PolicyStatement(
@@ -271,15 +265,6 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         )
         
     def _create_cloudtrail(self):
-      
-        # self.cloudtrail = cloudtrail.Trail( 
-        #     self, "CloudTrail",
-        #     trail_name=f"incident-response-cloudtrail-{self.account}-{self.region}",
-        #     is_multi_region_trail=True,
-        #     bucket=self.log_list_bucket,            
-        #     enable_file_validation=True,
-        #     management_events=cloudtrail.ReadWriteType.WRITE_ONLY,
-        # )
         
         self.cloudtrail= cloudtrail.CfnTrail(
             self, "CloudTrail",
