@@ -1,7 +1,26 @@
+## Automated AWS Incident Response and Forensics System Overview
 
-## AWS Incident Response Automation Stack Deployment Guide
+This project provides an automated security platform designed to minimize response time to security incidents within your AWS environment.
 
-This document provides step-by-step instructions for deploying the AWS Incident Response Automation CDK stack in your AWS Account.
+The system is built using **AWS CDK (Infrastructure-as-Code)** and works by orchestrating automated detection, isolation, and forensic data collection whenever a threat is identified.
+
+### Key Capabilities and Components
+
+* **Threat Detection:** Integrates with **Amazon GuardDuty**, **AWS CloudTrail**, and **VPC Flow Logs** for comprehensive threat detection and logging.
+* **Automated Response:** Uses **AWS Step Functions** to orchestrate immediate actions, including:
+    * **EC2 Isolation:** Automatically modifies security groups for compromised EC2 instances.
+    * **IAM Quarantine:** Applies a denial policy to compromised IAM user credentials.
+    * **Auto Scaling Group (ASG) Detachment:** Detaches compromised instances from ASGs to halt scaling.
+* **Forensic Data Pipeline:** Collects, processes, and stores all evidence using custom **ETL AWS Lambda** functions and **Kinesis Data Firehose**.
+* **Analysis and Investigation:** Centralizes all processed logs in **AWS Glue** tables for rapid, cost-effective forensic analysis using **Amazon Athena**, accessible via an integrated web dashboard.
+
+## Architecture
+
+_Automated AWS Incident Response and Forensics System Architecture_
+
+## Automated AWS Incident Response and Forensics Stack Deployment Guide
+
+This document provides step-by-step instructions for deploying the Automated AWS Incident Response and Forensics CDK stack in your AWS Account.
 
 ### AWS Configuration Setup
 
