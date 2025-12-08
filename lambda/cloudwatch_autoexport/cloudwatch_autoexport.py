@@ -8,12 +8,7 @@ import time
 
 s3 = boto3.client('s3')
 
-# --- CONFIGURATION ---
 RAW_S3_BUCKET = os.environ.get("DESTINATION_BUCKET")
-
-# The log group pattern constant is no longer used for filtering, but is kept for reference.
-# VPC_DNS_LOG_PATTERN = '/aws/route53/query/' 
-
 
 def is_vpc_dns_log(log_message):
     try:
@@ -47,7 +42,7 @@ def lambda_handler(event, context):
             filename_prefix = 'vpc-' # Add vpc- to the filename
         else:
             key_prefix = 'vpc-flow-logs'
-            filename_prefix = 'eni-'      # Keep filename blank for other logs
+            filename_prefix = 'eni-'      # Add eni- to the filename
             
         output_content = '\n'.join(log_lines)
         

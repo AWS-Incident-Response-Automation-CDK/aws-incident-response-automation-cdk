@@ -15,7 +15,6 @@ def lambda_handler(event, context):
     if instance_id_primary:
         instance_ids.append(instance_id_primary)
 
-    # --- 2. Extract from the older/secondary 'resources' array structure ---
     for r in detail.get("resources", []):
         if r.get("type") == "AwsEc2Instance":
             id_from_details = r.get('details', {}).get('instanceId')
