@@ -68,7 +68,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
-            removal_policy=RemovalPolicy.DESTROY
+            removal_policy=RemovalPolicy.RETAIN
         )
 
         self.processed_cloudtrail_logs_bucket = s3.Bucket(
@@ -78,7 +78,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
             enforce_ssl=True,
-            removal_policy=RemovalPolicy.DESTROY
+            removal_policy=RemovalPolicy.RETAIN
         )
 
         self.athena_query_results_bucket = s3.Bucket(
@@ -88,7 +88,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
             enforce_ssl=True,
-            removal_policy=RemovalPolicy.DESTROY
+            removal_policy=RemovalPolicy.RETAIN
         )
 
         self.processed_cloudwatch_logs_bucket = s3.Bucket(
@@ -98,7 +98,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
             enforce_ssl=True,
-            removal_policy=RemovalPolicy.DESTROY
+            removal_policy=RemovalPolicy.RETAIN
         )
 
         self.processed_guardduty_findings_bucket = s3.Bucket(
@@ -108,7 +108,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             versioned=True,
             enforce_ssl=True,
-            removal_policy=RemovalPolicy.DESTROY
+            removal_policy=RemovalPolicy.RETAIN
         )
 
     def _create_kms_key(self):
@@ -116,7 +116,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             self, "GuardDutyKMSKey",
             description="KMS Key for GuardDuty findings encryption",
             enable_key_rotation=True,
-            removal_policy=RemovalPolicy.DESTROY
+            removal_policy=RemovalPolicy.RETAIN
         )
 
         self.kms_key.add_to_resource_policy(
@@ -605,6 +605,9 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             self, "VpcDnsFirehoseStream",
             delivery_stream_name="vpc-dns-firehose-stream",
             delivery_stream_type="DirectPut",
+            delivery_stream_encryption_configuration_input=firehose.CfnDeliveryStream.DeliveryStreamEncryptionConfigurationInputProperty(
+                key_type="AWS_OWNED_CMK"
+            ),
             extended_s3_destination_configuration=firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
                 bucket_arn=self.processed_cloudwatch_logs_bucket.bucket_arn,
                 role_arn=self.cloudwatch_firehose_role.role_arn,
@@ -622,6 +625,9 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             self, "VpcFlowFirehoseStream",
             delivery_stream_name="vpc-flow-firehose-stream",
             delivery_stream_type="DirectPut",
+            delivery_stream_encryption_configuration_input=firehose.CfnDeliveryStream.DeliveryStreamEncryptionConfigurationInputProperty(
+                key_type="AWS_OWNED_CMK"
+            ),
             extended_s3_destination_configuration=firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
                 bucket_arn=self.processed_cloudwatch_logs_bucket.bucket_arn,
                 role_arn=self.cloudwatch_firehose_role.role_arn,
@@ -639,6 +645,9 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             self, "CloudTrailFirehoseStream",
             delivery_stream_name="cloudtrail-firehose-stream",
             delivery_stream_type="DirectPut",
+            delivery_stream_encryption_configuration_input=firehose.CfnDeliveryStream.DeliveryStreamEncryptionConfigurationInputProperty(
+                key_type="AWS_OWNED_CMK"
+            ),
             extended_s3_destination_configuration=firehose.CfnDeliveryStream.ExtendedS3DestinationConfigurationProperty(
                 bucket_arn=self.processed_cloudtrail_logs_bucket.bucket_arn,
                 role_arn=self.cloudtrail_firehose_role.role_arn,
@@ -763,21 +772,21 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
         ) 
             
     def _create_subscription_filter(self):
-      permission_resource = _lambda.CfnPermission(
-        self, "CloudWatchLogsLambdaPermission",
-        action="lambda:InvokeFunction",
-        function_name=self.cloudwatch_export_function.function_name,
-        principal=f"logs.{self.region}.amazonaws.com",
-        source_arn=f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/incident-response/centralized-logs:*"
-    )
+        permission_resource = _lambda.CfnPermission(
+            self, "CloudWatchLogsLambdaPermission",
+            action="lambda:InvokeFunction",
+            function_name=self.cloudwatch_export_function.function_name,
+            principal=f"logs.{self.region}.amazonaws.com",
+            source_arn=f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/incident-response/centralized-logs:*"
+        )
 
-      subscription_filter = logs.CfnSubscriptionFilter(
-        self, "IRLogGroupSubscriptionFilter",
-        log_group_name=self.ir_log_group.log_group_name,
-        filter_pattern="",
-        destination_arn=self.cloudwatch_export_function.function_arn
-    )
-      subscription_filter.add_dependency(permission_resource)
+        subscription_filter = logs.CfnSubscriptionFilter(
+            self, "IRLogGroupSubscriptionFilter",
+            log_group_name=self.ir_log_group.log_group_name,
+            filter_pattern="",
+            destination_arn=self.cloudwatch_export_function.function_arn
+        )
+        subscription_filter.add_dependency(permission_resource)
 
     def _create_cloudwatch_etl(self):
         self.cloudwatch_etl_function = _lambda.Function(
@@ -906,7 +915,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
     def _create_sns_topic(self):
         self.ir_alert_topic = sns.Topic(
             self, "IRAlertTopic",
-            topic_name="IncidentResponseAlerts"
+            topic_name="IncidentResponseAlerts",
         )
      
     def _create_event_bridge_rules(self):
@@ -963,15 +972,23 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
 
     def _create_security_group(self):
         vpc_ids = self.node.try_get_context("vpc_ids") or []
+        self.quarantine_sg_map={}
 
-        if vpc_ids:
-          self.quarantine_sg = ec2.CfnSecurityGroup(
-                self, "QuarantineSecurityGroup",
-                group_description="Security Group for Quarantined Instances",
-                vpc_id=vpc_ids[0], 
-                group_name="QuarantineSecurityGroup",
-                security_group_egress=[] 
+        for i, vpc_id in enumerate(vpc_ids):
+            vpc = ec2.Vpc.from_lookup(
+                self, f"VPC{i}",
+                vpc_id=vpc_id
             )
+
+            quarantine_sg = ec2.SecurityGroup(
+                self, f"QuarantineSG{i}",
+                vpc=vpc,
+                security_group_name=f"ir-quarantine-sg-{vpc_id}",
+                description="Security Group for isolating EC2 instances during incident response",
+                allow_all_outbound=False
+            )
+
+            self.quarantine_sg_map[vpc_id] = quarantine_sg.security_group_id
           
     def _create_isolate_ec2_lambda(self):
         self.isolate_ec2_function = _lambda.Function(
@@ -982,7 +999,7 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             code=_lambda.Code.from_asset("lambda/isolate_ec2"),
             timeout=Duration.minutes(5),
             environment={
-                "ISOLATION_SG_ID": self.quarantine_sg.ref if hasattr(self, 'quarantine_sg') else ""
+                "QUARANTINE_SG_MAP": json.dumps(self.quarantine_sg_map)
             }
         )
 
