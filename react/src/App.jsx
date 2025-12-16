@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, use } from 'react'
 import { useAuth } from "react-oidc-context";
 import './App.css'
 
 // --- CONFIGURATION ---
-const isProd = import.meta.env.PROD;
+//const isProd = import.meta.env.PROD;
 //const DEV_API_BASE_URL = 'https://dk8d92wzanrwm.cloudfront.net';
 //const base = isProd ? '' : DEV_API_BASE_URL;
 const ITEMS_PER_PAGE = 10;
@@ -72,6 +72,8 @@ function App({ config }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [selectedFilter, setSelectedFilter] = useState({});
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -91,6 +93,8 @@ function App({ config }) {
     vpc: ['account_id', 'vpc_id', 'region', 'query_name', 'srcids_instance', 'timestamp'],
     eni: ['account_id', 'interface_id', 'srcaddr', 'dstaddr', 'srcport', 'dstport', 'protocol', 'action', 'timestamp_str']
   };
+
+  const DATE_COLUMNS = ['eventtime', 'timestamp', 'created_at', 'event_last_seen', 'timestamp_str'];
 
   // Modal state
   const [selectedItem, setSelectedItem] = useState(null);
@@ -122,6 +126,12 @@ function App({ config }) {
     }
   };
 
+  const handleTabChange = (tab) => {
+    setData([]);
+    setCurrentPage(1);
+    setActiveTab(tab);
+  }
+
   const fetchOverallStats = async () => {
     try {
       const [gdData, ctData, vpcData, eniData] = await Promise.all([
@@ -147,6 +157,13 @@ function App({ config }) {
     if (!response.ok) throw new Error(`HTTP Error! Status: ${response.status}`);
     const result = await response.json();
     return result.ResultSet ? parseAthenaResult(result.ResultSet) : (Array.isArray(result) ? result : []);
+  };
+
+  const getDetailTitle = () => {
+    if (activeTab === 'guardduty') return 'Finding Details';
+    if (activeTab === 'cloudtrail') return 'Event Details';
+    if (activeTab === 'vpc') return 'VPC Flow Log Details';
+    return 'ENI Flow Log Details';
   };
 
   // --- NEW HELPER: Bucket Severity ---
@@ -192,15 +209,63 @@ function App({ config }) {
     });
   };
 
+  const filterData = data.filter(item => {
+    return Object.entries(selectedFilter).every(([key, value]) => {
+      if (!value) return true;
+      let rowValue = String(item[key] || '');
+
+      if(DATE_COLUMNS.includes(key) && rowValue.includes('T')) {
+        rowValue = rowValue.split('T')[0];
+      }
+      return rowValue === value;
+    });
+  });
+
+  const sortData = [...filterData].sort((a, b) => {
+    if(!sortConfig.key) return 0;
+
+    let valA = a[sortConfig.key] || '';
+    let valB = b[sortConfig.key] || '';
+
+    if (DATE_COLUMNS.includes(sortConfig.key)) {
+      const dateA = new Date(valA).getTime();
+      const dateB = new Date(valB).getTime();
+      if (isNaN(dateA)) return 1;
+      if (isNaN(dateB)) return -1;
+        
+      return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
+    }
+
+    const numA = parseFloat(valA);
+    const numB = parseFloat(valB);
+
+    const isPureNumber = !isNaN(numA) && !isNaN(numB) && String(valA).trim() === String(numA) && String(valB).trim() === String(numB);
+
+    if (isPureNumber) {
+        return sortConfig.direction === 'asc' ? numA - numB : numB - numA;
+    }
+
+    valA = String(valA).toUpperCase();
+    valB = String(valB).toUpperCase();
+
+    if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+    if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  //Reset to page 1 on filter or tab change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedFilter]);
+
   const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
   const indexOfFirstItem = indexOfLastItem - ITEMS_PER_PAGE;
-  const currentItems = data.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(data.length / ITEMS_PER_PAGE);
+  const currentItems = sortData.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(sortData.length / ITEMS_PER_PAGE);
 
   const nextPage = () => { if (currentPage < totalPages) setCurrentPage(prev => prev + 1); };
   const prevPage = () => { if (currentPage > 1) setCurrentPage(prev => prev - 1); };
 
-  // --- NEW: SUMMARY METRICS CALCULATION ---
   const getSummaryMetrics = () => {
     // 1. Get "Today's Date" string (YYYY-MM-DD) in local time
     const now = new Date();
@@ -322,6 +387,66 @@ function App({ config }) {
     );
   };
 
+  const createFilter = (item) => {
+    if(!item) return '';
+    const activeCols = TABLE_COLUMNS[activeTab];
+    const uniqueValuesPerCol = {};
+
+    activeCols.forEach(col => {
+      const isDate = DATE_COLUMNS.includes(col);
+      const allValues = data.map(d => {
+        let val = d[col] || '';
+        if (isDate && val.includes('T')) {
+          return val.split('T')[0]; // Extract date part only
+        }
+
+        return val;
+      });
+      uniqueValuesPerCol[col] = Array.from(new Set(allValues)).filter(x => x);
+    });
+
+      return (
+        <div className="filters-container">
+        {Object.entries(uniqueValuesPerCol).map(([colName, values], idx) => (
+          <div key={colName} className="filter-group">
+            <label>{colName.replace(/_/g, ' ')}</label> 
+            <select 
+              name={colName}
+              value={selectedFilter[colName] || ''}
+              onChange={(e) => handleFilterChange(colName, e.target.value)}
+            >
+              <option value="">All</option>
+              {values.map((optionValue, optionIdx) => (
+                <option key={optionIdx} value={optionValue}>
+                  {optionValue}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
+      );
+  };
+
+  const handleFilterChange = (colName, value) => {
+    setSelectedFilter(prev => ({
+      ...prev,
+      [colName]: value
+    }));
+  }
+
+  const clearFilters = () => {
+    setSelectedFilter({});
+  };
+
+  const sortHandler = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
   const metrics = getSummaryMetrics();
 
   useEffect(() => {
@@ -361,16 +486,16 @@ function App({ config }) {
 
       <div className="controls">
         <div className="tabs">
-          <button className={`tab-btn ${activeTab === 'guardduty' ? 'active' : ''}`} onClick={() => setActiveTab('guardduty')}>
+          <button className={`tab-btn ${activeTab === 'guardduty' ? 'active' : ''}`} onClick={() => handleTabChange('guardduty')}>
             <Icons.Shield size={18} /> GuardDuty
           </button>
-          <button className={`tab-btn ${activeTab === 'cloudtrail' ? 'active' : ''}`} onClick={() => setActiveTab('cloudtrail')}>
+          <button className={`tab-btn ${activeTab === 'cloudtrail' ? 'active' : ''}`} onClick={() => handleTabChange('cloudtrail')}>
             <Icons.Activity size={18} /> CloudTrail
           </button>
-          <button className={`tab-btn ${activeTab === 'vpc' ? 'active' : ''}`} onClick={() => setActiveTab('vpc')}>
+          <button className={`tab-btn ${activeTab === 'vpc' ? 'active' : ''}`} onClick={() => handleTabChange('vpc')}>
             <Icons.Network size={18} /> VPC Network
           </button>
-          <button className={`tab-btn ${activeTab === 'eni' ? 'active' : ''}`} onClick={() => setActiveTab('eni')}>
+          <button className={`tab-btn ${activeTab === 'eni' ? 'active' : ''}`} onClick={() => handleTabChange('eni')}>
             <Icons.Network size={18} /> ENI Flow Logs
           </button>
         </div>
@@ -411,22 +536,34 @@ function App({ config }) {
                 activeTab === 'vpc' ? 'VPC Flow Logs' : 'ENI Flow Logs'}
           </div>
 
+          <div className='filter-section'>
+            {createFilter(activeTab)}
+            <button className='clearbtn' onClick={clearFilters}>CLEAR</button>
+          </div>
+
           {error && <div className="error-message"><p>{error}</p></div>}
           {loading && <div className="loading-spinner"><div className="spinner"></div></div>}
 
           {!loading && !error && data.length > 0 && (
             <>
-              {/* KEY CHANGE: 
-                   Pagination is now a SIBLING to table-wrapper, not a CHILD.
-                */}
               <div className="table-wrapper">
                 <table>
                   <thead>
                     <tr>
-                      {/* Dynamic Headers based on Configuration */}
                       {data.length > 0 && TABLE_COLUMNS[activeTab] ?
                         TABLE_COLUMNS[activeTab].map((key) => (
-                          <th key={key}>{key.replace(/_/g, ' ')}</th>
+                          <th key={key}
+                            onClick={() => sortHandler(key)}
+                            style={{ cursor: 'pointer', userSelect: 'none' }}
+                          >
+                            {key.replace(/_/g, ' ')}
+
+                            {sortConfig.key === key ? (
+                              <span style={{marginLeft: '5px'}}>{sortConfig.direction === 'asc' ? ' ▲' : ' ▼'}</span>
+                            ) : (
+                              <span style={{ marginLeft: '5px', opacity: 0.3 }}> ▼</span>
+                            )}
+                          </th>
                         )) :
                         // Fallback if config missing: Show first 5 keys
                         Object.keys(data[0] || {}).slice(0, 5).map(key => <th key={key}>{key}</th>)
@@ -480,16 +617,19 @@ function App({ config }) {
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Incident Details</h2>
+              <h2>{getDetailTitle()}</h2>
               <button className="close-btn" onClick={() => setIsModalOpen(false)}>X</button>
             </div>
             <div className="modal-body">
-              {detailLoading ? <p>Loading...</p> : selectedItem ? (
+              {selectedItem ? (
                 <div>
                   {Object.entries(selectedItem).map(([key, value]) => (
                     <div key={key} className="detail-row">
                       <div className="detail-label">{key.replace(/_/g, ' ')}</div>
-                      <div className="detail-value">{value}</div>
+                      <div className="detail-value">{typeof value === 'object' && value !== null 
+                          ? JSON.stringify(value) 
+                          : String(value)
+                        }</div>
                     </div>
                   ))}
                 </div>
