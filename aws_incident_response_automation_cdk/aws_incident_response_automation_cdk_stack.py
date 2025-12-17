@@ -58,6 +58,9 @@ class AwsIncidentResponseAutomationCdkStack(Stack):
             self._create_vpc_flow_logs(vpc_ids)
             self._create_dns_query_logging(vpc_ids)
 
+        if self.log_list_bucket.policy:
+            self.cloudtrail.node.add_dependency(self.log_list_bucket.policy)
+
 
     def _create_storage_infrastructure(self):
 
