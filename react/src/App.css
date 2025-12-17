@@ -373,11 +373,10 @@ tr:hover td {
 }
 
 .filters-container {
-  display: flex;
-  grid-template-columns: 1fr;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 1.2rem;
-  flex-wrap: wrap;
-  flex: 1;
+  width: 100%;
 }
 
 .filter-group {
