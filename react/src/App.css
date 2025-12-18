@@ -310,6 +310,13 @@ th {
   border-bottom: 1px solid var(--border);
 }
 
+.th-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
 td {
   padding: 0.8rem 1rem;
   border-bottom: 1px solid var(--border);
@@ -348,6 +355,93 @@ tr:hover td {
     height: 30px;
     animation: spin 1s linear infinite;
     margin: 0 auto;
+}
+
+.filter-section {
+  background: var(--bg-card);
+  padding: 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-direction: column;
+  gap: 1.5rem;
+  box-shadow: var(--shadow-sm);
+  flex-wrap: wrap;
+}
+
+.filters-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1.2rem;
+  width: 100%;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.filter-group label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-light);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.filter-group select {
+  height: 42px;
+  width: 100%;
+  padding: 0 2rem 0 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: #fff;
+  color: var(--text-main);
+  font-size: 0.85rem;
+  min-width: 160px;
+  cursor: pointer;
+  appearance: none;
+  
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 1rem;
+  transition: all 0.2s;
+}
+
+.filter-group select:focus {
+  outline: none;
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 3px rgba(236, 114, 17, 0.1);
+}
+
+.filter-group select:hover {
+  border-color: #b0b0b0;
+}
+
+.clearbtn {
+  height: 38px;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 0 1.5rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.clearbtn:hover {
+  background: #fef2f2;
+  box-shadow: 0 2px 4px rgba(239, 68, 68, 0.1);
 }
 
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
