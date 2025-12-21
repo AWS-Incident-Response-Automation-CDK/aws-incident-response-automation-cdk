@@ -629,7 +629,7 @@ function App({ config }) {
                   <h4>{m.label}</h4>
                   <div className="value">
                     {m.value}
-                    {m.value > 999 ? '+' : ''}
+                    {m.value > 998 ? '+' : ''}
                   </div>
                   <div className="sub-text">{m.sub}</div>
                 </div>
@@ -656,9 +656,6 @@ function App({ config }) {
 
           {!loading && !error && data.length > 0 && (
             <>
-              {/* KEY CHANGE: 
-                   Pagination is now a SIBLING to table-wrapper, not a CHILD.
-                */}
               <div className="table-wrapper">
                 <table>
                   <thead>
@@ -718,7 +715,7 @@ function App({ config }) {
               <button className="close-btn" onClick={closeModal}>X</button>
             </div>
             <div className="modal-body">
-              {detailLoading ? <p>Loading...</p> : selectedItem ? (
+              {selectedItem ? (
                 <div>
                   {Object.entries(selectedItem)
                   .filter(([key]) => !key.startsWith('__'))
